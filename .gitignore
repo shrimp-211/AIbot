@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 本地数据 (含隐私: 密码哈希, API密钥)
+data/
+*.db
+*.log
+
+# 测试/部署
+deploy/
+.pytest_cache/
+test_webui.py
+
+# 参考文件 (仅本地)
+reference.txt
+mainidea.md
+mainidea.txt
+*.zip
+
+# 学习记录 (本地开发笔记)
+.learnings/
+findings.md
+progress.md
+task_plan.md
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# 环境变量 (含密钥)
+.env
+.env.*
+!.env.example
+
+# 旧版本遗留 (已被 webui/ 替代)
+webui.py
+
+# 系统文件
+.DS_Store
+Thumbs.db
+CLAUDE.md
