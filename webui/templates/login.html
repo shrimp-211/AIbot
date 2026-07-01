@@ -1,0 +1,32 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AstrBot Dashboard — 登录</title>
+<style>
+:root{--bg:#121212;--surface:#1e1e1e;--surface2:#272727;--border:#333;--text:#e0e0e0;--dim:#999;--primary:#7c4dff;--primary-dark:#651fff;--green:#4caf50;--red:#ef5350;--amber:#ffc107}
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:linear-gradient(135deg,#121212 0%,#1a1a2e 50%,#16213e 100%);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:48px 40px;width:100%;max-width:420px;box-shadow:0 24px 80px rgba(0,0,0,.5);position:relative;overflow:hidden}
+.login-box::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--primary),#448aff,#18ffff)}
+.logo{text-align:center;margin-bottom:8px}.logo svg{width:56px;height:56px}
+h1{color:#fff;font-size:24px;text-align:center;font-weight:700;margin-bottom:4px;letter-spacing:-.5px}
+.sub{color:var(--dim);text-align:center;margin-bottom:32px;font-size:13px}
+.fg{margin-bottom:18px}.fg label{display:block;color:var(--dim);margin-bottom:6px;font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.5px}
+.fg input{width:100%;padding:14px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;outline:none;transition:all .2s}
+.fg input:focus{border-color:var(--primary);box-shadow:0 0 0 4px rgba(124,77,255,.12)}
+.btn{width:100%;padding:14px;background:var(--primary);color:#fff;border:none;border-radius:10px;font-size:15px;cursor:pointer;font-weight:600;transition:all .2s;letter-spacing:.3px}
+.btn:hover{background:var(--primary-dark);box-shadow:0 4px 20px rgba(124,77,255,.3);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.err{color:var(--red);font-size:13px;margin-top:14px;text-align:center;display:none;background:rgba(239,83,80,.1);padding:10px;border-radius:8px}
+.footer{text-align:center;margin-top:24px;color:var(--dim);font-size:11px}
+</style></head><body>
+<div class="login-box">
+<div class="logo"><svg viewBox="0 0 56 56" fill="none"><rect width="56" height="56" rx="14" fill="rgba(124,77,255,.15)"/><path d="M16 20h24l-8 16H20l-4-16z" fill="#7c4dff" opacity=".8"/><circle cx="28" cy="36" r="4" fill="#7c4dff"/></svg></div>
+<h1>QQ AI Agent</h1><p class="sub">万能智能助手 · 管理控制台</p>
+<form id="f">
+<div class="fg"><label>用户名</label><input type="text" id="u" placeholder="admin"></div>
+<div class="fg"><label>密码</label><input type="password" id="p" placeholder="输入密码"></div>
+<button type="submit" class="btn">登 录</button><div class="err" id="e"></div>
+</form><p class="footer">AstrBot Dashboard · v4.0</p></div>
+<script>
+document.getElementById('f').addEventListener('submit',async e=>{e.preventDefault();
+try{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('u').value,password:document.getElementById('p').value})});
+if(!r.ok){document.getElementById('e').textContent='用户名或密码错误';document.getElementById('e').style.display='block';return}
+window.location.href='/'}catch(ex){document.getElementById('e').textContent='网络错误';document.getElementById('e').style.display='block'}})
+</script></body></html>

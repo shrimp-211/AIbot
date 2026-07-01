@@ -1,0 +1,166 @@
+# ============================================================
+# 万能 QQ AI Agent 配置文件 — 所有 API 均为可配置项
+# ============================================================
+
+# ---- OneBot v11 连接 ----
+onebot:
+  host: "127.0.0.1"
+  port: 6199
+  path: "/ws"
+  access_token: ""
+  api_timeout: 30              # API响应超时(秒)
+
+# ---- 主 LLM ----
+provider:
+  type: openai                 # openai | anthropic
+  model: claude-sonnet-4-6
+  api_key: "${ANTHROPIC_API_KEY}"
+  base_url: "https://api.anthropic.com"
+  max_tokens: 4096
+  temperature: 0.7
+
+  # 视觉模型
+  vision:
+    type: openai
+    model: gpt-4o
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai.com/v1"
+    max_tokens: 4096
+
+# ---- 多模型编排 (并行/竞速/投票/融合) ----
+orchestrator:
+  enabled: true
+  fallback_models: []           # 备用模型列表 ["deepseek-v3", "gemini-2.5-flash"]
+  default_mode: fallback        # parallel | race | vote | fusion | fallback | cost_aware
+
+# ---- 网页搜索 ----
+web_search:
+  engine: duckduckgo            # duckduckgo | google | bing | brave
+  google_api_key: "${GOOGLE_API_KEY}"
+  google_cse_id: "${GOOGLE_CSE_ID}"
+  brave_api_key: "${BRAVE_API_KEY}"
+  timeout: 10
+
+# ---- 网页抓取 ----
+web_fetch:
+  timeout: 15
+  max_content_length: 4000
+  user_agent: "QQ-Agent/1.0"
+  blocked_domains: []           # 额外禁止的域名
+
+# ---- 语音 STT ----
+stt:
+  provider: none                # none | openai_whisper | azure | local
+  model: whisper-1
+  api_key: "${OPENAI_API_KEY}"
+  base_url: "https://api.openai.com/v1"
+  language: zh
+
+# ---- 语音 TTS ----
+tts:
+  provider: none                # none | openai | azure | edge | fishaudio
+  model: tts-1
+  voice: alloy
+  api_key: "${OPENAI_API_KEY}"
+  base_url: "https://api.openai.com/v1"
+
+# ---- Agent 行为 ----
+agent:
+  name: "QQ小助手"
+  system_prompt: |
+    你是一个友好的 QQ 群聊 AI 助手。
+    1. 回答问题和提供信息
+    2. 使用工具搜索网页、读取文件、执行代码
+    3. 帮助用户完成任务
+
+    回复要求：
+    - 使用自然、亲切的语气
+    - 回复简洁，不超过 500 字
+    - 群聊中优先使用简短回复
+  wake_words: []
+  rate_limit: {window_sec: 60, max_requests: 30}
+  nlu_enabled: true
+  max_turns: 15
+  compressor_enabled: true
+  max_context_tokens: 8000
+
+# ---- 知识库 RAG ----
+knowledge_base:
+  enabled: true
+  collection: default
+  search_top_k: 5
+  chunk_size: 500
+
+# ---- 记忆 ----
+memory:
+  working_size: 20
+  episodic_ttl: 86400
+  flush_interval: 10           # 刷盘间隔(秒)
+
+# ---- 权限 ----
+permissions:
+  super_admins: []
+  admins: []
+  blacklist: []
+  group_whitelist: []
+  command_prefix: "/"
+
+# ---- 安全 ----
+security:
+  content_filter_enabled: true
+  sandbox_enabled: false
+  sandbox_image: "qq-agent-sandbox:latest"
+  max_message_length: 2000
+
+# ---- 日志 ----
+logging:
+  level: INFO
+  format: text                  # text | json
+  file: data/agent.log
+  rotation: "10 MB"
+
+# ---- WebUI ----
+webui:
+  enabled: true
+  host: "127.0.0.1"
+  port: 6185
+  username: admin
+  password: "${WEBUI_PASSWORD:-admin123}"
+
+# ---- Webhook (多平台接入) ----
+webhook:
+  enabled: false
+  host: "0.0.0.0"
+  port: 6186
+  telegram_token: "${TELEGRAM_BOT_TOKEN}"
+  discord_token: "${DISCORD_BOT_TOKEN}"
+  qq_official_secret: "${QQ_OFFICIAL_SECRET}"
+
+# ---- MCP 服务器 (Model Context Protocol) ----
+mcp:
+  enabled: false
+  servers: []
+  # 示例:
+  # - name: filesystem
+  #   command: npx
+  #   args: ["-y", "@anthropic-ai/mcp-server-filesystem", "/tmp"]
+
+# ---- 主动型 Agent ----
+proactive:
+  enabled: true
+  check_interval: 30            # 检查间隔(秒)
+
+# ---- 自改进 ----
+self_improve:
+  enabled: true
+  history_size: 200
+  degradation_threshold: 0.1    # 退化告警阈值
+
+# ---- Docker沙箱 ----
+sandbox:
+  enabled: false
+  image: "qq-agent-sandbox"
+  memory_limit: "256m"
+  cpu_limit: "0.5"
+  network: none                 # none | bridge
+  read_only_rootfs: true

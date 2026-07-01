@@ -1,0 +1,192 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AstrBot Dashboard</title>
+<style>
+:root{--bg:#121212;--surface:#1e1e1e;--surface2:#272727;--border:#333;--text:#e0e0e0;--dim:#999;--primary:#7c4dff;--primary-dark:#651fff;--green:#4caf50;--red:#ef5350;--amber:#ffc107;--blue:#448aff;--cyan:#18ffff}
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;font-size:13px}
+nav{width:240px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;position:sticky;top:0;height:100vh;overflow-y:auto}
+nav .brand{padding:20px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}
+nav .brand svg{width:32px;height:32px;flex-shrink:0}
+nav .brand-text{color:#fff;font-size:15px;font-weight:700;letter-spacing:-.3px}
+nav .brand-sub{color:var(--dim);font-size:10px;margin-top:2px}
+.nav-section{padding:8px 0;border-bottom:1px solid rgba(51,51,51,.5)}.nav-section:last-child{border:0}
+.nav-label{padding:12px 20px 4px;color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:600}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 20px;color:var(--dim);cursor:pointer;font-size:13px;transition:.15s;border:none;background:none;width:100%;text-align:left}.nav-item:hover{color:var(--text);background:var(--surface2)}.nav-item.active{color:var(--primary);background:rgba(124,77,255,.08);border-right:3px solid var(--primary)}.nav-item .icon{width:20px;text-align:center;font-size:15px}.nav-item .badge{font-size:10px;margin-left:auto;background:var(--primary);color:#fff;padding:2px 6px;border-radius:8px}
+.spacer{flex:1}
+main{flex:1;padding:24px 28px;overflow-y:auto;max-width:1200px}
+.page{display:none}.page.active{display:block}
+h2{font-size:20px;color:#fff;margin-bottom:8px;font-weight:700;letter-spacing:-.5px}.page-desc{color:var(--dim);margin-bottom:20px;font-size:13px}
+.bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}.bar-actions{display:flex;gap:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;transition:border-color .2s}.card:hover{border-color:rgba(124,77,255,.3)}
+.card h3{font-size:14px;color:#fff;margin-bottom:12px;font-weight:600;display:flex;align-items:center;gap:8px}
+.stat{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(51,51,51,.4)}.stat:last-child{border:0}
+.stat .key{color:var(--dim)}.stat .val{color:var(--text);font-weight:600}.stat .val.g{color:var(--green)}.stat .val.r{color:var(--red)}.stat .val.b{color:var(--blue)}.stat .val.p{color:var(--primary)}.stat .val.a{color:var(--amber)}
+.btn{padding:8px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:.15s;display:inline-flex;align-items:center;gap:6px}.btn-p{background:var(--primary);color:#fff}.btn-p:hover{background:var(--primary-dark)}.btn-o{background:transparent;color:var(--primary);border:1px solid var(--primary)}.btn-o:hover{background:rgba(124,77,255,.08)}.btn-d{background:rgba(239,83,80,.1);color:var(--red)}.btn-d:hover{background:rgba(239,83,80,.2)}.btn-g{background:rgba(76,175,80,.1);color:var(--green)}.btn-sm{padding:5px 10px;font-size:11px}
+table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--dim);padding:10px 14px;border-bottom:2px solid var(--border);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}td{padding:10px 14px;border-bottom:1px solid rgba(51,51,51,.3)}tr:hover{background:var(--surface2)}td strong{color:#fff}
+.tag{display:inline-block;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600}.tag-0{background:rgba(255,255,255,.05);color:var(--dim)}.tag-1{background:rgba(76,175,80,.15);color:var(--green)}.tag-4{background:rgba(255,193,7,.15);color:var(--amber)}.tag-7{background:rgba(239,83,80,.15);color:var(--red)}.tag-blue{background:rgba(68,138,255,.15);color:var(--blue)}
+input,textarea,select{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;transition:.2s}input:focus,textarea:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(124,77,255,.1)}
+textarea{font-family:'JetBrains Mono','Fira Code',monospace;resize:vertical;min-height:320px;font-size:12px;line-height:1.6;tab-size:2}
+.chat-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}.chat-msgs{height:420px;overflow-y:auto;padding:16px;background:var(--bg)}.chat-msg{margin-bottom:10px;padding:10px 14px;border-radius:10px;max-width:85%;word-wrap:break-word;font-size:13px;line-height:1.5}.chat-user{background:rgba(124,77,255,.15);margin-left:auto;color:var(--text)}.chat-agent{background:var(--surface2);margin-right:auto;color:var(--text)}.chat-input{padding:12px;display:flex;gap:8px;background:var(--surface);border-top:1px solid var(--border)}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;align-items:center;justify-content:center}.modal.show{display:flex}.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;max-width:480px;width:90%;box-shadow:0 16px 48px rgba(0,0,0,.4)}.modal-box h3{color:#fff;font-size:16px;margin-bottom:16px}
+.toast{position:fixed;top:16px;right:16px;padding:12px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:200;animation:in .3s}.toast-ok{background:#1b5e20;color:var(--green);border:1px solid var(--green)}.toast-err{background:#b71c1c;color:var(--red);border:1px solid var(--red)}
+@keyframes in{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.empty{text-align:center;padding:40px;color:var(--dim);font-size:14px}.empty .icon{font-size:40px;margin-bottom:10px}
+code{background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:12px;color:var(--cyan)}
+.tab-nav{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px}.tab-btn{padding:8px 16px;background:none;border:none;color:var(--dim);cursor:pointer;font-size:13px;border-bottom:2px solid transparent;transition:.15s}.tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.form-group{margin-bottom:16px}.form-group label{display:block;color:var(--dim);margin-bottom:4px;font-size:12px;font-weight:500}
+</style></head><body>
+<nav>
+<div class="brand"><svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="rgba(124,77,255,.15)"/><path d="M8 10h16l-6 10H10l-2-10z" fill="#7c4dff"/></svg><div><div class="brand-text">QQ AI Agent</div><div class="brand-sub">管理控制台 v4.0</div></div></div>
+<div class="nav-section"><div class="nav-label">概览</div><button class="nav-item active" data-p="dashboard"><span class="icon">📊</span>仪表盘</button><button class="nav-item" data-p="chat"><span class="icon">💬</span>AI 对话</button></div>
+<div class="nav-section"><div class="nav-label">管理</div><button class="nav-item" data-p="tools"><span class="icon">🔧</span>工具管理</button><button class="nav-item" data-p="providers"><span class="icon">🤖</span>模型提供商</button><button class="nav-item" data-p="plugins"><span class="icon">🧩</span>插件管理</button><button class="nav-item" data-p="config"><span class="icon">⚙️</span>配置文件</button></div>
+<div class="nav-section"><div class="nav-label">高级</div><button class="nav-item" data-p="knowledge"><span class="icon">📚</span>知识库</button><button class="nav-item" data-p="mcp"><span class="icon">🔌</span>MCP 管理</button><button class="nav-item" data-p="cron"><span class="icon">⏰</span>定时任务</button><button class="nav-item" data-p="personas"><span class="icon">🎭</span>人格管理</button></div>
+<div class="nav-section"><div class="nav-label">运维</div><button class="nav-item" data-p="trace"><span class="icon">🔍</span>追踪查看</button><button class="nav-item" data-p="commands"><span class="icon">📋</span>指令管理</button><button class="nav-item" data-p="livechat"><span class="icon">⚡</span>实时对话</button><button class="nav-item" data-p="backup"><span class="icon">💾</span>备份恢复</button><button class="nav-item" data-p="stats"><span class="icon">📈</span>运行统计</button><button class="nav-item" data-p="logs"><span class="icon">📜</span>日志查看</button><button class="nav-item" data-p="apikeys"><span class="icon">🔑</span>API 密钥</button></div>
+<div class="spacer"></div>
+<div class="nav-section"><button class="nav-item" onclick="logout()"><span class="icon">🚪</span>退出登录</button></div>
+</nav>
+<main>
+<div id="p-dashboard" class="page active"><h2>📊 仪表盘</h2><p class="page-desc">系统运行状态概览</p><div id="dashC"></div></div>
+<div id="p-chat" class="page"><h2>💬 AI 对话</h2><p class="page-desc">直接与 AI Agent 对话测试</p><div class="chat-box"><div id="chatMsgs" class="chat-msgs"></div><div class="chat-input"><input id="chatIn" placeholder="输入消息..." style="flex:1" onkeydown="if(event.key==='Enter')sendChat()"><button class="btn btn-p" onclick="sendChat()">发送</button></div></div></div>
+<div id="p-tools" class="page"><h2>🔧 工具管理</h2><p class="page-desc">管理 Agent 可用的所有工具 (38个)</p><div id="toolsC"></div></div>
+<div id="p-providers" class="page"><h2>🤖 模型提供商</h2><p class="page-desc">管理 LLM 提供商和模型配置</p><div class="card"><h3>当前配置</h3><div id="providerInfo"></div></div></div>
+<div id="p-plugins" class="page"><h2>🧩 插件管理</h2><p class="page-desc">管理已加载的插件</p><div id="pluginsC"></div></div>
+<div id="p-config" class="page"><h2>⚙️ 配置管理</h2><p class="page-desc">可视化配置编辑器 + YAML 代码模式</p>
+<div class="tab-nav"><button class="tab-btn active" data-ctab="form">可视化表单</button><button class="tab-btn" data-ctab="yaml">YAML 编辑器</button></div>
+<div id="ctab-form">
+<div class="card mb"><h3>OneBot 连接</h3><div class="form-row"><div class="form-group"><label>Host</label><input id="cf-onebot-host"></div><div class="form-group"><label>Port</label><input id="cf-onebot-port" type="number"></div></div><div class="form-group"><label>Access Token</label><input id="cf-onebot-token" type="password"></div></div>
+<div class="card mb"><h3>LLM Provider</h3><div class="form-row"><div class="form-group"><label>模型</label><input id="cf-model"></div><div class="form-group"><label>API Key</label><input id="cf-apikey" type="password"></div></div><div class="form-row"><div class="form-group"><label>Base URL</label><input id="cf-baseurl"></div><div class="form-group"><label>Max Tokens</label><input id="cf-maxtokens" type="number"></div></div></div>
+<div class="card mb"><h3>Agent 行为</h3><div class="form-row"><div class="form-group"><label>名称</label><input id="cf-agent-name"></div><div class="form-group"><label>Max Turns</label><input id="cf-agent-turns" type="number"></div></div><div class="form-group"><label>System Prompt</label><textarea id="cf-system-prompt" style="min-height:120px"></textarea></div></div>
+<div class="card mb"><h3>权限</h3><div class="form-row"><div class="form-group"><label>超级管理员 (逗号分隔)</label><input id="cf-superadmins"></div><div class="form-group"><label>管理员</label><input id="cf-admins"></div></div><div class="form-row"><div class="form-group"><label>命令前缀</label><input id="cf-cmdprefix"></div><div class="form-group"><label>群白名单</label><input id="cf-whitelist"></div></div></div>
+<div class="card mb"><h3>WebUI</h3><div class="form-row"><div class="form-group"><label>端口</label><input id="cf-webui-port" type="number"></div><div class="form-group"><label>用户名</label><input id="cf-webui-user"></div></div></div>
+<div class="bar"><button class="btn btn-p" onclick="saveCfgForm()">保存所有配置</button><button class="btn btn-o" onclick="loadCfgForm()">重新加载</button><span id="cfgMsg"></span></div>
+</div>
+<div id="ctab-yaml" style="display:none"><textarea id="cfgEd"></textarea><div class="bar mt"><span></span><span><button class="btn btn-o btn-sm" onclick="loadCfg()">刷新</button><button class="btn btn-p btn-sm" onclick="saveCfg()">保存</button></span></div></div></div>
+<div id="p-knowledge" class="page"><h2>📚 知识库</h2><p class="page-desc">管理知识库文档 (RAG检索)</p><div class="bar"><span id="kbInfo"></span><button class="btn btn-p btn-sm" onclick="addKbDoc()">添加文档</button></div><div id="kbC"></div></div>
+<div id="p-mcp" class="page"><h2>🔌 MCP 管理</h2><p class="page-desc">Model Context Protocol 服务器管理</p><div class="bar"><span id="mcpInfo"></span><button class="btn btn-p btn-sm" onclick="addMcp()">添加服务器</button></div><div id="mcpC"></div></div>
+<div id="p-cron" class="page"><h2>⏰ 定时任务</h2><p class="page-desc">主动型 Agent 定时任务</p><div class="bar"><span id="cronInfo"></span></div><div id="cronC"></div></div>
+<div id="p-personas" class="page"><h2>🎭 人格管理</h2><p class="page-desc">管理 Agent 人格/角色</p><div id="personaC"></div></div>
+<div id="p-stats" class="page"><h2>📈 运行统计</h2><p class="page-desc">API 调用和交互统计</p><div id="statsC"></div></div>
+<div id="p-logs" class="page"><h2>📜 日志查看</h2><p class="page-desc">实时运行日志</p><div class="bar"><button class="btn btn-o btn-sm" onclick="loadLogs()">刷新</button><button class="btn btn-d btn-sm" onclick="clearLogs()">清空</button></div><div id="logView" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;font-family:monospace;font-size:11px;line-height:1.7;max-height:500px;overflow-y:auto;white-space:pre-wrap;color:var(--dim)"></div></div>
+<div id="p-apikeys" class="page"><h2>🔑 API 密钥</h2><p class="page-desc">管理 HTTP API 访问密钥</p><div class="bar"><button class="btn btn-p btn-sm" onclick="genKey()">生成新密钥</button></div><div id="keysC"></div></div>
+<div id="p-trace" class="page"><h2>🔍 追踪查看</h2><p class="page-desc">实时工具调用追踪 (AstrBot Trace)</p><div class="bar"><button class="btn btn-o btn-sm" onclick="loadTrace()">刷新</button><span id="traceInfo" style="color:var(--dim);font-size:12px"></span></div><div id="traceC" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;max-height:500px;overflow-y:auto"></div></div>
+<div id="p-commands" class="page"><h2>📋 指令管理</h2><p class="page-desc">管理所有已注册的指令 (AstrBot CommandService)</p><div id="cmdC"></div></div>
+<div id="p-livechat" class="page"><h2>⚡ 实时对话</h2><p class="page-desc">WebSocket 实时流式对话 (AstrBot LiveChat)</p><div class="chat-box"><div id="liveMsgs" class="chat-msgs" style="height:400px"></div><div class="chat-input"><input id="liveIn" placeholder="输入消息..." style="flex:1" onkeydown="if(event.key==='Enter')sendLive()"><button class="btn btn-p" onclick="sendLive()">发送</button><span id="liveStatus" style="font-size:11px;color:var(--dim);align-self:center;margin-left:8px">● 已连接</span></div></div></div>
+<div id="p-backup" class="page"><h2>💾 备份恢复</h2><p class="page-desc">数据备份与导出 (AstrBot BackupService)</p><div class="bar"><button class="btn btn-p btn-sm" onclick="createBackup()">创建备份</button><button class="btn btn-o btn-sm" onclick="exportData()">导出数据</button></div><div id="backupC"></div></div>
+</main>
+<div class="modal" id="modal"><div class="modal-box" id="modalContent"></div></div>
+<script>
+const A='/api';let R=null;
+function $(id){return document.getElementById(id)}
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML}
+function t(msg,ok){const el=document.createElement('div');el.className='toast '+(ok?'toast-ok':'toast-err');el.textContent=msg;document.body.appendChild(el);setTimeout(()=>el.remove(),3000)}
+
+// Nav
+document.querySelectorAll('.nav-item[data-p]').forEach(b=>b.addEventListener('click',()=>switchPg(b.dataset.p)))
+function switchPg(n){
+document.querySelectorAll('.nav-item[data-p]').forEach(b=>b.classList.remove('active'))
+document.querySelector(`[data-p="${n}"]`).classList.add('active')
+document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'))
+$('p-'+n).classList.add('active')
+const m={dashboard:ld,tools:lt,config:lc,plugins:lp,providers:lpr,chat:null,knowledge:lk,mcp:lmc,cron:lcr,personas:lpe,stats:ls,logs:ll,apikeys:la,trace:ltr,commands:lcm,livechat:llc,backup:lb}
+if(m[n])m[n]()}
+
+async function F(p,opt){try{const r=await fetch(A+p,opt||{});if(r.status===401){window.location.href='/login';return null}return await r.json()}catch(e){return null}}
+
+// Dashboard
+async function ld(){const d=await F('/status');if(!d)return $( 'dashC').innerHTML='<div class="empty">加载失败</div>'
+$('dashC').innerHTML=`<div class="grid">
+<div class="card"><h3>系统状态</h3><div class="stat"><span class="key">状态</span><span class="val g">● 运行中</span></div><div class="stat"><span class="key">模型</span><span class="val">${esc(d.model)}</span></div><div class="stat"><span class="key">工具总数</span><span class="val b">${d.tools}</span></div><div class="stat"><span class="key">插件</span><span class="val">${d.plugins}</span></div></div>
+<div class="card"><h3>记忆系统</h3><div class="stat"><span class="key">活跃会话</span><span class="val">${d.sessions}</span></div><div class="stat"><span class="key">工作记忆</span><span class="val">${d.working_entries} 条</span></div><div class="stat"><span class="key">短期记忆</span><span class="val">${d.episodic_sessions} 会话</span></div></div>
+<div class="card"><h3>编排</h3><div class="stat"><span class="key">主模型</span><span class="val p">${esc(d.active_model)}</span></div><div class="stat"><span class="key">权限规则</span><span class="val">${d.auth_rules} 条</span></div></div>
+<div class="card"><h3>工具分组</h3>${Object.entries(d.tool_groups||{}).map(([k,v])=>`<div class="stat"><span class="key">${esc(k)}</span><span class="val">${v}</span></div>`).join('')}</div></div>`}
+
+// Tools
+async function lt(){const d=await F('/tools');$('toolsC').innerHTML=d?`<table><thead><tr><th>工具名</th><th>描述</th><th>权限</th></tr></thead><tbody>${d.tools.map(t=>`<tr><td><strong>${esc(t.name)}</strong></td><td>${esc(t.description||'').slice(0,90)}</td><td><span class="tag tag-${t.permission}">L${t.permission}</span></td></tr>`).join('')}</tbody></table>`:'<div class="empty">加载失败</div>'}
+
+// Config tabs
+document.querySelectorAll('[data-ctab]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-ctab]').forEach(x=>x.classList.remove('active'));b.classList.add('active');$('ctab-form').style.display=b.dataset.ctab==='form'?'block':'none';$('ctab-yaml').style.display=b.dataset.ctab==='yaml'?'block':'none'}))
+// Config form
+async function lc(){loadCfgForm();const d=await F('/config');if(d)$('cfgEd').value=d.yaml}
+function setVal(id,v){const el=$(id);if(el)el.value=v||''}
+async function loadCfgForm(){const d=await F('/config/form');if(!d)return
+setVal('cf-onebot-host',d.onebot?.host);setVal('cf-onebot-port',d.onebot?.port)
+setVal('cf-onebot-token',d.onebot?.access_token);setVal('cf-model',d.provider?.model)
+setVal('cf-apikey',d.provider?.api_key);setVal('cf-baseurl',d.provider?.base_url)
+setVal('cf-maxtokens',d.provider?.max_tokens);setVal('cf-agent-name',d.agent?.name)
+setVal('cf-agent-turns',d.agent?.max_turns);setVal('cf-system-prompt',d.agent?.system_prompt)
+setVal('cf-superadmins',(d.permissions?.super_admins||[]).join(','))
+setVal('cf-admins',(d.permissions?.admins||[]).join(','))
+setVal('cf-cmdprefix',d.permissions?.command_prefix);setVal('cf-whitelist',(d.permissions?.group_whitelist||[]).join(','))
+setVal('cf-webui-port',d.webui?.port);setVal('cf-webui-user',d.webui?.username)}
+async function saveCfgForm(){const data={onebot:{host:$('cf-onebot-host').value,port:parseInt($('cf-onebot-port').value)||6199,path:'/ws',access_token:$('cf-onebot-token').value,reconnect_interval:3,heartbeat_interval:5},provider:{type:'openai',model:$('cf-model').value,api_key:$('cf-apikey').value,base_url:$('cf-baseurl').value,max_tokens:parseInt($('cf-maxtokens').value)||4096,temperature:0.7},agent:{name:$('cf-agent-name').value||'QQ小助手',max_turns:parseInt($('cf-agent-turns').value)||15,system_prompt:$('cf-system-prompt').value,nlu_enabled:true,compressor_enabled:true,max_context_tokens:8000,wake_words:[],rate_limit:{window_sec:60,max_requests:30}},permissions:{super_admins:($('cf-superadmins').value||'').split(',').filter(Boolean),admins:($('cf-admins').value||'').split(',').filter(Boolean),group_whitelist:($('cf-whitelist').value||'').split(',').filter(Boolean),command_prefix:$('cf-cmdprefix').value||'/',blacklist:[]},webui:{port:parseInt($('cf-webui-port').value)||6185,username:$('cf-webui-user').value||'admin',password:'${WEBUI_PASSWORD:-admin123}',enabled:true,host:'127.0.0.1'}}
+const yaml=await F('/config/form',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+if(yaml){$('cfgMsg').textContent='已保存';$('cfgMsg').style.color='var(--green)';loadCfgForm()}else{$('cfgMsg').textContent='失败';$('cfgMsg').style.color='var(--red)'}}
+async function saveCfg(){const r=await fetch(A+'/config',{method:'PUT',body:$('cfgEd').value});$('cfgMsg').textContent=r.ok?'已保存':'保存失败';$('cfgMsg').style.color=r.ok?'var(--green)':'var(--red)'}
+
+// Plugins
+async function lp(){const d=await F('/plugins');$('pluginsC').innerHTML=d&&d.plugins.length?`<table><thead><tr><th>插件</th><th>版本</th><th>描述</th></tr></thead><tbody>${d.plugins.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.version)}</td><td>${esc(p.description)}</td></tr>`).join('')}</tbody></table>`:'<div class="card"><div class="empty"><div class="icon">🧩</div>暂无插件</div></div>'}
+
+// Providers
+async function lpr(){const d=await F('/providers');$('providerInfo').innerHTML=d?`<div class="stat"><span class="key">主模型</span><span class="val p">${esc(d.active_model)}</span></div><div class="stat"><span class="key">提供商类型</span><span class="val">${esc(d.provider_type)}</span></div><div class="stat"><span class="key">Vision模型</span><span class="val ${d.vision_ready?'g':'r'}">${d.vision_ready?'就绪':'未配置'}</span></div><div class="stat"><span class="key">已注册模型</span><span class="val b">${d.models} 个</span></div>`:'加载中...'}
+
+// Knowledge
+async function lk(){const d=await F('/knowledge');$('kbInfo').textContent=d?`共 ${d.total||0} 篇文档`:''
+$('kbC').innerHTML=d&&d.docs?`<table><thead><tr><th>标题</th><th>来源</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${d.docs.map(doc=>`<tr><td><strong>${esc(doc.title)}</strong></td><td>${esc(doc.source)}</td><td>${esc(doc.updated)}</td><td><button class="btn btn-d btn-sm" onclick="delKb('${esc(doc.id)}')">删除</button></td></tr>`).join('')}</tbody></table>`:'<div class="card"><div class="empty"><div class="icon">📚</div>暂无文档</div></div>'}
+async function addKbDoc(){const title=prompt('文档标题:');const content=prompt('文档内容:');if(!title||!content)return
+await F('/knowledge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,content})});lk()}
+async function delKb(id){if(!confirm('确认删除?'))return;await fetch(A+'/knowledge/'+id,{method:'DELETE'});lk()}
+
+// MCP
+async function lmc(){const d=await F('/mcp');$('mcpInfo').textContent=d?`${d.servers?.length||0} 个服务器`:''
+$('mcpC').innerHTML=d&&d.servers?.length?`<table><thead><tr><th>名称</th><th>命令</th><th>工具数</th><th>操作</th></tr></thead><tbody>${d.servers.map(s=>`<tr><td><strong>${esc(s.name)}</strong></td><td><code>${esc(s.command)}</code></td><td><span class="tag tag-blue">${s.tools}</span></td><td><button class="btn btn-d btn-sm" onclick="delMcp('${esc(s.name)}')">断开</button></td></tr>`).join('')}</tbody></table>`:'<div class="card"><div class="empty"><div class="icon">🔌</div>暂无MCP服务器</div></div>'}
+async function addMcp(){const name=prompt('服务器名称:');const cmd=prompt('启动命令 (如: npx):');const args=prompt('参数 (空格分隔):','')
+if(!name||!cmd)return;await F('/mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,command:cmd,args:args.split(' ').filter(Boolean)})});lmc()}
+async function delMcp(name){if(!confirm('断开 '+name+'?'))return;await fetch(A+'/mcp/'+name,{method:'DELETE'});lmc()}
+
+// Cron
+async function lcr(){const d=await F('/cron');$('cronC').innerHTML=d&&d.tasks?.length?`<table><thead><tr><th>ID</th><th>描述</th><th>调度</th><th>操作</th></tr></thead><tbody>${d.tasks.map(t=>`<tr><td><code>${esc(t.id)}</code></td><td>${esc(t.description)}</td><td><span class="tag tag-blue">${esc(JSON.stringify(t.schedule))}</span></td><td><button class="btn btn-d btn-sm" onclick="delCron('${esc(t.id)}')">删除</button></td></tr>`).join('')}</tbody></table>`:'<div class="card"><div class="empty"><div class="icon">⏰</div>暂无定时任务</div></div>'}
+async function delCron(id){await fetch(A+'/cron/'+id,{method:'DELETE'});lcr()}
+
+// Personas
+async function lpe(){const d=await F('/personas');$('personaC').innerHTML=d?`<table><thead><tr><th>ID</th><th>名称</th><th>描述</th><th>状态</th></tr></thead><tbody>${d.personas.map(p=>`<tr><td><code>${esc(p.id)}</code></td><td><strong>${esc(p.name)}</strong></td><td>${esc(p.description)}</td><td>${p.active?`<span class="tag tag-1">当前</span>`:''}</td></tr>`).join('')}</tbody></table>`:''}
+
+// Stats
+async function ls(){const d=await F('/stats');$('statsC').innerHTML=d?`<div class="grid"><div class="card"><h3>API 调用</h3><div class="stat"><span class="key">总请求</span><span class="val b">${d.requests||0}</span></div></div></div>`:''}
+
+// Chat
+async function sendChat(){const m=$('chatIn').value;if(!m)return;addMsg('user',m);$('chatIn').value='';const r=await F('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});if(r)addMsg('agent',r.reply||'(无回复)')}
+function addMsg(role,t){const d=document.createElement('div');d.className='chat-msg chat-'+role;d.textContent=t;const c=$('chatMsgs');c.appendChild(d);c.scrollTop=c.scrollHeight}
+
+// Logs
+async function ll(){const r=await fetch(A+'/logs');if(r.ok){const t=await r.text();const ls=t.split('\n').filter(Boolean).slice(-60);$('logView').innerHTML=ls.map(l=>{let c='';if(l.includes('ERROR'))c='color:var(--red)';else if(l.includes('WARNING'))c='color:var(--amber)';else if(l.includes('INFO'))c='color:var(--blue)';return`<div style="${c}">${esc(l)}</div>`}).join('')}}
+async function clearLogs(){await fetch(A+'/logs/clear',{method:'POST'});ll()}
+
+// API Keys
+async function la(){const d=await F('/apikeys');$('keysC').innerHTML=d&&d.keys?.length?`<table><thead><tr><th>名称</th><th>密钥</th><th>创建</th><th>操作</th></tr></thead><tbody>${d.keys.map(k=>`<tr><td><strong>${esc(k.name)}</strong></td><td><code>${esc(k.key_prefix)}...</code></td><td>${esc(k.created)}</td><td><button class="btn btn-d btn-sm" onclick="revokeKey('${esc(k.key)}')">删除</button></td></tr>`).join('')}</tbody></table>`:'<div class="card"><div class="empty"><div class="icon">🔑</div>暂无密钥 · 点击上方按钮生成</div></div>'}
+async function genKey(){const n=prompt('密钥名称:');if(!n)return;const r=await F('/apikeys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});if(r&&r.key){alert('API密钥已生成:\n\n'+r.key+'\n\n请立即保存!');la()}}
+async function revokeKey(k){if(!confirm('确认删除?'))return;await fetch(A+'/apikeys/'+k,{method:'DELETE'});la()}
+
+// Trace
+async function ltr(){const d=await F('/trace');$('traceInfo').textContent=d?`${(d.traces||[]).length} 条记录`:''
+$('traceC').innerHTML=d&&d.traces.length?`<table><thead><tr><th>时间</th><th>工具</th><th>参数</th><th>结果</th></tr></thead><tbody>${d.traces.map(t=>`<tr><td>${esc(t.time)}</td><td><code>${esc(t.tool)}</code></td><td style="max-width:200px;overflow:hidden">${esc(t.args).slice(0,80)}</td><td style="max-width:200px;overflow:hidden">${esc(t.result).slice(0,80)}</td></tr>`).join('')}</tbody></table>`:'<div class="empty"><div class="icon">🔍</div>暂无追踪记录</div>'}
+
+// Commands
+async function lcm(){const d=await F('/commands');$('cmdC').innerHTML=d&&d.commands.length?`<table><thead><tr><th>指令</th><th>类型</th><th>插件</th><th>优先级</th></tr></thead><tbody>${d.commands.map(c=>`<tr><td><code>/${esc(c.command)}</code></td><td><span class="tag tag-blue">${esc(c.type)}</span></td><td>${esc(c.plugin)}</td><td>${c.priority}</td></tr>`).join('')}</tbody></table>`:'<div class="card"><div class="empty"><div class="icon">📋</div>暂无已注册指令</div></div>'}
+
+// Live Chat (WebSocket)
+let ws=null
+async function llc(){if(ws)return;$('liveStatus').textContent='● 连接中...';$('liveStatus').style.color='var(--amber)'
+try{ws=new WebSocket(`ws://${location.host}/ws/chat`);ws.onopen=()=>{$('liveStatus').textContent='● 已连接';$('liveStatus').style.color='var(--green)'}
+ws.onmessage=e=>{try{const d=JSON.parse(e.data);if(d.type==='reply')addLiveMsg('agent',d.content)}catch(ex){}}
+ws.onclose=()=>{$('liveStatus').textContent='● 已断开';$('liveStatus').style.color='var(--red)';ws=null}
+ws.onerror=()=>{ws=null;$('liveStatus').textContent='● 错误';$('liveStatus').style.color='var(--red)'}}catch(ex){$('liveStatus').textContent='● 不支持';$('liveStatus').style.color='var(--red)'}}
+function sendLive(){const m=$('liveIn').value;if(!m||!ws)return;addLiveMsg('user',m);$('liveIn').value='';ws.send(JSON.stringify({message:m}))}
+function addLiveMsg(role,t){const d=document.createElement('div');d.className='chat-msg chat-'+role;d.textContent=t;const c=$('liveMsgs');c.appendChild(d);c.scrollTop=c.scrollHeight}
+
+// Backup
+async function lb(){const d=await F('/backup');$('backupC').innerHTML=d&&d.backups.length?`<table><thead><tr><th>文件名</th><th>大小</th><th>时间</th></tr></thead><tbody>${d.backups.map(b=>`<tr><td><strong>${esc(b.name)}</strong></td><td>${(b.size/1024).toFixed(1)} KB</td><td>${esc(b.time)}</td></tr>`).join('')}</tbody></table>`:'<div class="card"><div class="empty"><div class="icon">💾</div>暂无备份</div></div>'}
+async function createBackup(){const r=await F('/backup',{method:'POST'});if(r)t('备份已创建: '+r.name,true);lb()}
+async function exportData(){const d=await F('/export');if(d){const blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='qq-agent-export.json';a.click();t('数据已导出',true)}}
+
+function logout(){document.cookie='auth_token=;expires=Thu,01 Jan 1970 00:00:00 UTC;path=/';window.location.href='/login'}
+ld();llc();setInterval(()=>{if($('p-dashboard').classList.contains('active'))ld()},15000);
+</script></body></html>
