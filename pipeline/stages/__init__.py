@@ -1,6 +1,7 @@
 """管道阶段集合。"""
 from .content_safety import ContentSafetyStage
 from .decorate import DecorateStage
+from .notice import NoticeStage
 from .preprocess import PreProcessStage
 from .process import ProcessStage
 from .rate_limit import RateLimitStage
@@ -10,6 +11,7 @@ from .wake_check import WakeCheckStage
 __all__ = [
     "ContentSafetyStage",
     "DecorateStage",
+    "NoticeStage",
     "PreProcessStage",
     "ProcessStage",
     "RateLimitStage",

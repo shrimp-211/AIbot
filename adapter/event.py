@@ -16,7 +16,12 @@ SendCallback = Callable[["AgentEvent", str], Awaitable[None]]
 @dataclass
 class AgentEvent:
     platform: str = "qq"
+    event_type: str = "message"  # message | notice | request
     message_type: str = "group"  # group | private
+    notice_type: str = ""  # group_increase/group_decrease/group_recall/...
+    sub_type: str = ""  # leave|kick|disband / set|unset / add|invite
+    operator_id: str = ""  # 操作者 QQ(notice 事件)
+    flag: str = ""  # request 事件审批标记
     group_id: str | None = None
     user_id: str = ""
     sender_name: str = ""

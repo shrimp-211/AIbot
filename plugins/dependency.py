@@ -26,8 +26,12 @@ async def resolve_params(func: Callable[..., Any], event: AgentEvent, deps: dict
     """根据函数签名和类型注解注入参数。"""
     sig = inspect.signature(func)
     params: dict[str, Any] = {}
+    # 模块开启 `from __future__ import annotations` 时注解为字符串,需反查类型
+    name2dep = {dep.__name__: dep for dep in deps}
     for name, param in sig.parameters.items():
         ann = param.annotation
+        if isinstance(ann, str):
+            ann = name2dep.get(ann, ann)
 
         if ann in deps:
             params[name] = deps[ann]

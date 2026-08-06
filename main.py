@@ -10,12 +10,14 @@ import asyncio
 import signal
 import sys
 from pathlib import Path
+from typing import Callable
 
 from loguru import logger
 
 from .adapter import (
     AdapterRegistry,
     AgentEvent,
+    BaseAdapter,
     OneBotV11Adapter,
     OneBotV11Client,
     OneBotV11Http,
@@ -37,6 +39,7 @@ from .pipeline.scheduler import PipelineScheduler
 from .pipeline.stages import (
     ContentSafetyStage,
     DecorateStage,
+    NoticeStage,
     PreProcessStage,
     ProcessStage,
     RateLimitStage,
@@ -119,9 +122,18 @@ def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: Aut
         return None
 
 
-def build_pipeline(config: Config, auth: AuthManager, plugin_registry: PluginRegistry, engine: AgentEngine) -> PipelineScheduler:
+def build_pipeline(
+    config: Config,
+    auth: AuthManager,
+    plugin_registry: PluginRegistry,
+    engine: AgentEngine,
+    db: JsonKV | None = None,
+    adapter_getter: Callable[[], BaseAdapter | None] | None = None,
+) -> PipelineScheduler:
+    """构建洋葱模型管道。NoticeStage 置于最前,先消费 notice/request 事件。"""
     return PipelineScheduler(
         [
+            NoticeStage(config, db=db, adapter_getter=adapter_getter),
             WakeCheckStage(config, auth),
             RateLimitStage(config),
             ContentSafetyStage(config),
@@ -212,17 +224,22 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     plugin_registry.register_dependency(Config, config)
     plugin_registry.register_dependency(AuthManager, auth)
     plugin_registry.register_dependency(MemoryStore, memory)
+    plugin_registry.register_dependency(JsonKV, db)  # 插件持久化数据
     register_builtin_plugins(plugin_registry, config, auth)
 
     # 外部插件(热加载 */data/plugins/*.py,支持 setup(registry) 入口)
     for plugin_dir in _plugin_dirs():
         await plugin_registry.load_from_directory(plugin_dir)
 
-    # 管道
-    pipeline = build_pipeline(config, auth, plugin_registry, engine)
-
-    # 适配器(多模式/多连接,统一注册到 AdapterRegistry)
+    # 适配器注册中心(NoticeStage 经 adapter_getter 惰性获取主适配器)
     adapter_registry = AdapterRegistry()
+
+    # 管道
+    pipeline = build_pipeline(
+        config, auth, plugin_registry, engine,
+        db=db,
+        adapter_getter=lambda: adapter_registry.get("qq"),
+    )
     adapter_registry.set_callback(pipeline.execute)
 
     main_adapter = OneBotV11Adapter(

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -48,6 +49,9 @@ class OneBotV11Adapter(BaseAdapter):
         self._echo_waiters: dict[str, asyncio.Future] = {}
         self._seq = 0
         self._lock = asyncio.Lock()
+        # 最近消息缓存(message_id -> 快照),供群撤回拦截恢复原文
+        self.message_cache: dict[int, dict[str, Any]] = {}
+        self._msg_cache_max = 200
 
     async def start(self) -> None:
         await self._runner.setup()
@@ -123,6 +127,15 @@ class OneBotV11Adapter(BaseAdapter):
                 asyncio.create_task(self._adopt_connection(sid, ws))
             self._active_ws = ws
             asyncio.create_task(self._handle_message(data))
+        elif post_type in ("notice", "request"):
+            # 通知/请求事件同样按 self_id 归位,交给管道处理
+            sid = str(data.get("self_id", "") or "")
+            if sid:
+                asyncio.create_task(self._adopt_connection(sid, ws))
+            if post_type == "notice":
+                asyncio.create_task(self._handle_notice(data))
+            else:
+                asyncio.create_task(self._handle_request(data))
 
     async def _adopt_connection(self, sid: str, ws: web.WebSocketResponse) -> None:
         """按消息中的 self_id 将连接归位,支持多机器人同时在线。"""
@@ -133,9 +146,36 @@ class OneBotV11Adapter(BaseAdapter):
             self._active_ws = ws
 
     async def _handle_message(self, data: dict[str, Any]) -> None:
+        event = self._build_event(data)
+        if event.message_id:
+            self._cache_message(event)
         if self.on_event is not None:
-            event = self._build_event(data)
             await self.on_event(event)
+
+    async def _handle_notice(self, data: dict[str, Any]) -> None:
+        if self.on_event is not None:
+            await self.on_event(self._build_notice_event(data))
+
+    async def _handle_request(self, data: dict[str, Any]) -> None:
+        if self.on_event is not None:
+            await self.on_event(self._build_request_event(data))
+
+    def _cache_message(self, event: AgentEvent) -> None:
+        """缓存最近消息,供群撤回拦截恢复原文(环形缓冲)。"""
+        if event.message_id in self.message_cache:
+            return
+        self.message_cache[event.message_id] = {
+            "text": event.raw_message or event.plain_text,
+            "name": event.sender_name,
+            "user_id": event.user_id,
+            "group_id": event.group_id,
+            "ts": time.time(),
+        }
+        while len(self.message_cache) > self._msg_cache_max:
+            oldest = next(iter(self.message_cache), None)
+            if oldest is None:
+                break
+            self.message_cache.pop(oldest, None)
 
     def _build_event(self, data: dict[str, Any]) -> AgentEvent:
         mtype = data.get("message_type", "group")
@@ -169,6 +209,41 @@ class OneBotV11Adapter(BaseAdapter):
             message_id=data.get("message_id"),
             session_id=session_id,
             is_tome=is_tome,
+            _send_callback=self._reply,
+        )
+
+    def _build_notice_event(self, data: dict[str, Any]) -> AgentEvent:
+        """构造通知事件(group_increase/group_decrease/group_recall/...)。"""
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        user_id = str(data.get("user_id", ""))
+        return AgentEvent(
+            platform="qq",
+            event_type="notice",
+            notice_type=data.get("notice_type", ""),
+            sub_type=data.get("sub_type", ""),
+            operator_id=str(data.get("operator_id", "") or ""),
+            group_id=group_id,
+            user_id=user_id,
+            message_id=data.get("message_id"),
+            session_id=group_id or user_id,
+            _send_callback=self._reply,
+        )
+
+    def _build_request_event(self, data: dict[str, Any]) -> AgentEvent:
+        """构造请求事件(friend 加好友 / group 加群)。flag 用于审批回执。"""
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        user_id = str(data.get("user_id", ""))
+        request_type = data.get("request_type", "")
+        return AgentEvent(
+            platform="qq",
+            event_type="request",
+            notice_type=request_type,  # friend | group
+            sub_type=data.get("sub_type", ""),  # group: add | invite
+            flag=str(data.get("flag", "") or ""),
+            group_id=group_id,
+            user_id=user_id,
+            raw_message=data.get("comment", ""),
+            session_id=group_id or user_id,
             _send_callback=self._reply,
         )
 
@@ -230,6 +305,18 @@ class OneBotV11Adapter(BaseAdapter):
 
     async def send_like(self, user_id: str | int, times: int = 1) -> Any:
         return await self.call_api("send_like", user_id=int(user_id), times=times)
+
+    # ---------- 请求审批 ----------
+
+    async def set_friend_add_request(self, flag: str, approve: bool = True, remark: str = "") -> Any:
+        return await self.call_api("set_friend_add_request", flag=flag, approve=approve, remark=remark)
+
+    async def set_group_add_request(
+        self, flag: str, sub_type: str = "add", approve: bool = True, reason: str = ""
+    ) -> Any:
+        return await self.call_api(
+            "set_group_add_request", flag=flag, sub_type=sub_type, approve=approve, reason=reason
+        )
 
     # ---------- 群管理 ----------
 

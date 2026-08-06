@@ -85,6 +85,21 @@ agent:
 # - Markdown 文件记忆(MEMORY.md/USER.md/SOUL.md):data/memory/
 # 用户画像自动提炼:每 8 条用户消息触发一次 LLM 自我反思
 
+# ---------- 通知/请求事件 ----------
+# OneBot notice/request 事件:群成员变动、防撤回、加好友/加群请求策略
+notice:
+  welcome:
+    enabled: true
+    text: "🎉 欢迎新成员 {name} 加入群聊!发送 /help 了解我能做什么~"
+  farewell:
+    enabled: true
+    text: "👋 {name} 离开了群聊"
+  anti_recall:
+    enabled: true          # 群撤回拦截:缓存最近消息,撤回时恢复原文
+    format: "🗑️ 撤回拦截 {name}: {text}"
+  friend_requests: accept   # 加好友请求: accept | reject | ignore
+  group_requests: accept    # 加群请求:    accept | reject | ignore
+
 # ---------- 消息管道 ----------
 pipeline:
   group_whitelist: []      # 群白名单(QQ号列表),空数组=全部群
