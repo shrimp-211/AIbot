@@ -27,7 +27,7 @@ from src.adapter.message import MessageChain, MessageSegment, escape_cq
 from src.pipeline.stages.plugin import PluginStage
 from src.plugins.registry import PluginRegistry
 from src.security.auth import AuthManager
-from src.utils.config import Config
+from src.utils.config import Config, load_config, save_config, validate_config
 
 
 def make_event(text: str, user_id: str = "42", group_id: str | None = "100") -> AgentEvent:
@@ -215,6 +215,48 @@ async def test_message_recall_withdraw():
     ev2._send_callback = capture
     await plug.dispatch(ev2)
     assert fake.deleted == [111], "无记录时不应调用 delete_msg"
+
+
+async def test_config_validate_ok():
+    cfg = load_config(ROOT / "src" / "config.yaml")
+    assert validate_config(cfg.raw()) == [], validate_config(cfg.raw())
+
+
+async def test_config_validate_errors():
+    bad = {"webui": {"port": "not-a-port"}, "agent": {"max_iterations": -3}}
+    errors = validate_config(bad)
+    assert any("webui.port" in e for e in errors), errors
+    assert any("max_iterations" in e for e in errors), errors
+
+
+async def test_config_set_get():
+    cfg = Config({"a": {"b": 1}})
+    assert cfg.get("a.b") == 1
+    cfg.set("a.b", 2)
+    cfg.set("x.y.z", "deep")
+    assert cfg.get("a.b") == 2
+    assert cfg.get("x.y.z") == "deep"
+    assert cfg.get("missing", "fallback") == "fallback"
+
+
+async def test_config_save_reload():
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "conf.yaml"
+        data = {"webui": {"enabled": True, "port": 8080}}
+        assert save_config(path, data) == []
+        assert path.is_file()
+        cfg = load_config(path)
+        assert cfg.get("webui.port") == 8080
+        # 修改内存并写回,再热重载
+        cfg.set("webui.port", 9090)
+        assert cfg.save() == []
+        reload_errors = cfg.reload()
+        assert reload_errors == [], reload_errors
+        assert cfg.get("webui.port") == 9090
+        # 非法配置拒绝写盘
+        assert save_config(path, {"webui": {"port": "x"}}) != []
 
 
 async def test_driver_start_stop_idempotent():

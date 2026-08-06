@@ -16,10 +16,11 @@ from typing import Any
 
 from aiohttp import WSMsgType, web
 from loguru import logger
+import yaml
 
 from ..adapter.event import AgentEvent
 from ..adapter.message import MessageChain, MessageSegment
-from ..utils.config import Config
+from ..utils.config import Config, save_config, validate_config
 
 STATIC_DIR = Path(__file__).parent / "static"
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -327,14 +328,28 @@ class WebUIServer:
         content = str(data.get("content", "") or "")
         if not content.strip():
             return web.json_response({"ok": False, "error": "内容不能为空"}, status=400)
+        # 解析 + schema 校验:不合法一律不落盘
+        try:
+            new_data = yaml.safe_load(content)
+        except yaml.YAMLError as exc:
+            return web.json_response({"ok": False, "error": f"YAML 解析失败: {exc}"}, status=400)
+        if not isinstance(new_data, dict):
+            return web.json_response({"ok": False, "error": "配置根节点必须是映射"}, status=400)
+        errors = validate_config(new_data)
+        if errors:
+            return web.json_response(
+                {"ok": False, "error": "配置校验失败", "errors": errors[:20]}, status=400
+            )
         try:
             backup = self._config_path.read_text(encoding="utf-8")[:200] if self._config_path.is_file() else ""
-            self._config_path.write_text(content, encoding="utf-8")
-            logger.info("WebUI 已更新配置文件")
+            save_config(self._config_path, new_data)
+            # 热重载:更新内存中的配置对象(惰性读取的组件立即生效)
+            reload_errors = self._config.reload()
+            logger.info("WebUI 已更新配置文件(校验通过,{} 条重载告警)", len(reload_errors))
         except OSError as exc:
             logger.exception("配置文件写入失败")
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
-        return web.json_response({"ok": True, "backup_preview": backup})
+        return web.json_response({"ok": True, "backup_preview": backup, "warnings": reload_errors[:20]})
 
     # ---------- 适配器状态 ----------
 
