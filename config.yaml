@@ -1,0 +1,56 @@
+# ==================== QQ AI Agent 全局配置 ====================
+# 支持 ${ENV_VAR} 与 ${ENV_VAR:-default} 环境变量注入
+# 复制为 config.local.yaml 可本地覆盖(该文件已被 gitignore)
+
+# ---------- OneBot v11 连接 ----------
+onebot:
+  host: 127.0.0.1          # 监听地址
+  port: 6199               # 监听端口(NapCat/Lagrange/go-cqhttp 在此反向连接)
+  path: /ws                # WebSocket 路径
+  token: ""                # Access Token(与 OneBot 客户端保持一致)
+  self_id: ""              # 机器人 QQ 号,用于 @ 检测
+
+# ---------- LLM Provider ----------
+llm:
+  provider:
+    type: openai_compatible   # openai_compatible | anthropic
+    model: gpt-4o-mini        # 例如 DeepSeek: deepseek-chat
+    api_key: ${LLM_API_KEY:-}  # 建议用环境变量注入
+    base_url: ""              # OpenAI 兼容地址,如 DeepSeek: https://api.deepseek.com/v1
+    max_tokens: 4096
+    temperature: 0.7
+
+# ---------- 联网搜索 ----------
+search:
+  tavily_key: ${TAVILY_API_KEY:-}
+  brave_key: ${BRAVE_API_KEY:-}
+
+# ---------- Agent ----------
+agent:
+  workdir: "."             # 文件工具的操作根目录
+  max_iterations: 8        # ReAct 循环最大迭代次数
+  max_context_tokens: 128000  # 上下文压缩触发阈值(超过 82% 自动压缩)
+
+# ---------- 消息管道 ----------
+pipeline:
+  group_whitelist: []      # 群白名单(QQ号列表),空数组=全部群
+  wake_words: ["机器人", "小助手", "AI"]
+  command_prefixes: ["!", "/"]
+  rate_limit:
+    max_messages: 30       # 每窗口最大消息数
+    window_seconds: 60
+  content_safety:
+    max_length: 5000       # 单条消息最大长度
+
+# ---------- 权限 ----------
+security:
+  admin_users: []               # 管理员 QQ 号
+  super_admin_users: ["123456789"]  # 超级管理员 QQ 号(改为你自己的)
+  # 内置规则: 禁读 .env/secrets, 禁危险命令, curl/wget/sudo 需管理员
+
+# ---------- WebUI 控制台 ----------
+webui:
+  enabled: true
+  host: 127.0.0.1
+  port: 8080
+  password: admin123        # 管理密码(建议登录后修改为强密码)

@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.whl
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 日志
+*.log
+logs/
+
+# 配置中的密钥(本地配置不提交)
+config.local.yaml
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# git 内部 SSH key(仅本机使用,不推送)
+.git/ssh/

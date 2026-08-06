@@ -1,0 +1,27 @@
+[project]
+name = "qq-ai-agent"
+version = "1.0.0"
+description = "基于 OneBot v11 + Claude Code 模式的万能 QQ AI Agent"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "aiohttp>=3.9",
+    "httpx>=0.27",
+    "loguru>=0.7",
+    "pyyaml>=6.0",
+    "openai>=1.30",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# 运行方式:在 src/ 目录执行 `python -m src.main`
+# 本文件仅用于声明依赖与元数据,不强制打包安装
+[tool.setuptools]
+py-modules = []
