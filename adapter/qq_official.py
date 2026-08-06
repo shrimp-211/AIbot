@@ -49,6 +49,8 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
         self.api_base = api_base.rstrip("/")
         self._init_server(host, port, path, driver)
         self._session: aiohttp.ClientSession | None = None
+        self._running = False
+        self._msg_seq = 0
 
     def _register_driver_route(self, driver: ReverseDriver, path: str) -> None:
         driver.register_http(path, self._webhook_handler, method="POST")
@@ -59,8 +61,10 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
     async def start(self) -> None:
         await self._start_server("QQ 官方 Webhook")
         self._session = aiohttp.ClientSession()
+        self._running = True
 
     async def stop(self) -> None:
+        self._running = False
         await self._stop_server()
         if self._session is not None:
             await self._session.close()
@@ -87,6 +91,8 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
     # ---------- 事件接收 ----------
 
     async def _webhook_handler(self, request: web.Request) -> web.Response:
+        if not self._running:
+            return web.Response(status=503, text="Adapter stopped")
         body = await request.read()
         if not self._verify_signature(request, body):
             return web.Response(status=401, text="Invalid signature")
@@ -100,9 +106,15 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
 
     async def _dispatch_frame(self, data: dict[str, Any]) -> None:
         try:
-            if data.get("post_type") == "message" and self.on_event is not None:
-                event = self._build_event(data)
-                await self.on_event(event)
+            if self.on_event is None:
+                return
+            post_type = data.get("post_type")
+            if post_type == "message":
+                await self.on_event(self._build_event(data))
+            elif post_type == "notice":
+                await self.on_event(self._build_notice_event(data))
+            elif post_type == "request":
+                await self.on_event(self._build_request_event(data))
         except Exception:  # noqa: BLE001
             logger.exception("QQ 官方事件处理异常")
 
@@ -137,6 +149,41 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
             message_id=data.get("message_id"),
             session_id=session_id,
             is_tome=is_tome,
+            _send_callback=self._reply,
+        )
+
+    def _build_notice_event(self, data: dict[str, Any]) -> AgentEvent:
+        """构造通知事件。QQ 官方事件结构与 OneBot 相似,字段尽量复用。"""
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        user_id = str(data.get("user_id", ""))
+        return AgentEvent(
+            platform="qq_official",
+            event_type="notice",
+            notice_type=data.get("notice_type", ""),
+            sub_type=data.get("sub_type", ""),
+            operator_id=str(data.get("operator_id", "") or ""),
+            group_id=group_id,
+            user_id=user_id,
+            message_id=data.get("message_id"),
+            session_id=group_id or user_id,
+            _send_callback=self._reply,
+        )
+
+    def _build_request_event(self, data: dict[str, Any]) -> AgentEvent:
+        """构造请求事件(friend 加好友 / group 加群)。flag 用于审批回执。"""
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        user_id = str(data.get("user_id", ""))
+        request_type = data.get("request_type", "")
+        return AgentEvent(
+            platform="qq_official",
+            event_type="request",
+            notice_type=request_type,  # friend | group
+            sub_type=data.get("sub_type", ""),  # group: add | invite
+            flag=str(data.get("flag", "") or ""),
+            group_id=group_id,
+            user_id=user_id,
+            raw_message=data.get("comment", ""),
+            session_id=group_id or user_id,
             _send_callback=self._reply,
         )
 
@@ -177,13 +224,18 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
     async def send_message(self, event: AgentEvent, text: str, at: bool = False) -> Any:
         return await self._reply(event, text, at=at)
 
+    def _next_msg_seq(self) -> int:
+        """msg_seq 需单调递增(QQ 官方要求),用计数器而非时间戳避免同秒碰撞。"""
+        self._msg_seq += 1
+        return self._msg_seq
+
     async def _send_group(self, group_openid: str, text: str) -> Any:
         token = await self._get_access_token()
         url = f"{self.api_base}/v2/groups/{group_openid}/messages"
         payload = {
             "content": [{"type": "text", "data": {"text": text}}],
             "msg_type": 0,
-            "msg_seq": int(time.time() % 100000),
+            "msg_seq": self._next_msg_seq(),
         }
         headers = {"Authorization": f"QQBot {token}"}
         async with self._session.post(url, json=payload, headers=headers, timeout=15) as resp:
@@ -198,7 +250,7 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
         payload = {
             "content": [{"type": "text", "data": {"text": text}}],
             "msg_type": 0,
-            "msg_seq": int(time.time() % 100000),
+            "msg_seq": self._next_msg_seq(),
         }
         headers = {"Authorization": f"QQBot {token}"}
         async with self._session.post(url, json=payload, headers=headers, timeout=15) as resp:

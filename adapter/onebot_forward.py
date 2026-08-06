@@ -68,7 +68,17 @@ class OneBotV11Client(BaseAdapter):
         if self._session is not None:
             await self._session.close()
             self._session = None
+        # 停止时立即失败在途 API 调用,避免悬挂至 30s 超时
+        self._fail_pending_waiters("适配器停止")
         logger.info("OneBot v11 正向 WS 客户端已停止")
+
+    def _fail_pending_waiters(self, reason: str) -> None:
+        """在途 API 调用在连接断开/停止时立即失败,避免悬挂至 30s 超时。"""
+        pending = list(self._echo_waiters.items())
+        for echo, fut in pending:
+            if not fut.done():
+                fut.set_exception(ConnectionError(f"OneBot 正向 WS {reason}"))
+        self._echo_waiters.clear()
 
     async def _connect_loop(self) -> None:
         while self._running:
@@ -109,6 +119,8 @@ class OneBotV11Client(BaseAdapter):
         finally:
             if self._ws is ws:
                 self._ws = None
+            # 连接断开:在途 echo 请求立即失败,避免悬挂
+            self._fail_pending_waiters("连接断开")
             logger.info("正向 WS 连接断开")
 
     # ---------- 事件分发 ----------
@@ -121,10 +133,15 @@ class OneBotV11Client(BaseAdapter):
                 fut.set_result(data)
             return
 
+        if self.on_event is None:
+            return
         post_type = data.get("post_type")
-        if post_type == "message" and self.on_event is not None:
-            event = self._build_event(data)
-            asyncio.create_task(self.on_event(event))
+        if post_type == "message":
+            asyncio.create_task(self.on_event(self._build_event(data)))
+        elif post_type == "notice":
+            asyncio.create_task(self.on_event(self._build_notice_event(data)))
+        elif post_type == "request":
+            asyncio.create_task(self.on_event(self._build_request_event(data)))
 
     def _build_event(self, data: dict[str, Any]) -> AgentEvent:
         mtype = data.get("message_type", "group")
@@ -158,6 +175,41 @@ class OneBotV11Client(BaseAdapter):
             message_id=data.get("message_id"),
             session_id=session_id,
             is_tome=is_tome,
+            _send_callback=self._reply,
+        )
+
+    def _build_notice_event(self, data: dict[str, Any]) -> AgentEvent:
+        """构造通知事件(group_increase/group_decrease/group_recall/...)。"""
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        user_id = str(data.get("user_id", ""))
+        return AgentEvent(
+            platform="qq",
+            event_type="notice",
+            notice_type=data.get("notice_type", ""),
+            sub_type=data.get("sub_type", ""),
+            operator_id=str(data.get("operator_id", "") or ""),
+            group_id=group_id,
+            user_id=user_id,
+            message_id=data.get("message_id"),
+            session_id=group_id or user_id,
+            _send_callback=self._reply,
+        )
+
+    def _build_request_event(self, data: dict[str, Any]) -> AgentEvent:
+        """构造请求事件(friend 加好友 / group 加群)。flag 用于审批回执。"""
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        user_id = str(data.get("user_id", ""))
+        request_type = data.get("request_type", "")
+        return AgentEvent(
+            platform="qq",
+            event_type="request",
+            notice_type=request_type,  # friend | group
+            sub_type=data.get("sub_type", ""),  # group: add | invite
+            flag=str(data.get("flag", "") or ""),
+            group_id=group_id,
+            user_id=user_id,
+            raw_message=data.get("comment", ""),
+            session_id=group_id or user_id,
             _send_callback=self._reply,
         )
 

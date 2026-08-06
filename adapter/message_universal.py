@@ -130,8 +130,6 @@ class UniMessage(list):
             d = seg.data
             if t in _SUPPORTED:
                 msg.append(UniSegment(t, dict(d)))
-            elif t == "at":
-                msg.append(UniSegment.at(d.get("qq", "")))
             else:
                 # 未知段降级为文本
                 msg.append(UniSegment.text(seg.to_cq_string() if hasattr(seg, "to_cq_string") else f"[{t}]"))

@@ -269,6 +269,135 @@ async def test_driver_start_stop_idempotent():
     await driver.stop()  # 幂等
 
 
+# ---------- 适配器修复回归 ----------
+
+
+class _FakeWebRequest:
+    """极简 aiohttp web.Request 替身:仅暴露适配器 handler 用到的接口。"""
+
+    def __init__(self, body: bytes = b"{}", headers: dict | None = None):
+        self._body = body
+        self.headers = headers or {}
+
+    async def json(self):
+        import json as _json
+
+        return _json.loads(self._body.decode("utf-8"))
+
+    async def read(self):
+        return self._body
+
+
+async def _wait_events(collector, count: int, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if len(collector) >= count:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"等待 {count} 个事件超时,现有 {len(collector)}")
+
+
+async def test_http_dispatch_notice_request():
+    """HTTP 适配器:notice/request 事件应分发(群撤回拦截依赖 notice),停止后 webhook 拒绝。"""
+    from src.adapter.onebot_http import OneBotV11Http
+
+    adapter = OneBotV11Http(driver=None)
+    assert adapter._running is False
+    # 未启动时 webhook 直接拒绝
+    resp = await adapter._webhook_handler(_FakeWebRequest(b'{"post_type":"message"}'))
+    assert resp.status == 503, resp.status
+
+    received: list[AgentEvent] = []
+
+    async def on_event(ev):
+        received.append(ev)
+
+    adapter.on_event = on_event
+    adapter._running = True  # 手工标记运行,不启动真实端口
+
+    await adapter._dispatch_frame(
+        {"post_type": "message", "message_type": "group", "group_id": 100,
+         "user_id": 1, "message": [{"type": "text", "data": {"text": "hi"}}],
+         "raw_message": "hi"}
+    )
+    await adapter._dispatch_frame(
+        {"post_type": "notice", "notice_type": "group_recall", "group_id": 100,
+         "user_id": 2, "operator_id": 3, "message_id": 888}
+    )
+    await adapter._dispatch_frame(
+        {"post_type": "request", "request_type": "group", "group_id": 100,
+         "user_id": 4, "flag": "abc", "comment": "加群"}
+    )
+    assert len(received) == 3, len(received)
+    assert received[0].message_type == "group"
+    assert received[1].event_type == "notice" and received[1].notice_type == "group_recall"
+    assert received[1].operator_id == "3" and received[1].message_id == 888
+    assert received[2].event_type == "request" and received[2].flag == "abc"
+
+    # 鉴权:配置 token 后错误 Authorization 拒绝
+    adapter.token = "sekrit"
+    resp = await adapter._webhook_handler(_FakeWebRequest(b"{}", headers={"Authorization": "Bearer wrong"}))
+    assert resp.status == 401, resp.status
+
+
+async def test_forward_dispatch_notice_request():
+    """正向 WS 客户端:notice/request 事件应分发,不再静默丢弃。"""
+    from src.adapter.onebot_forward import OneBotV11Client
+
+    client = OneBotV11Client(url="ws://127.0.0.1:1")
+    received: list[AgentEvent] = []
+
+    async def on_event(ev):
+        received.append(ev)
+
+    client.on_event = on_event
+
+    client._on_frame(
+        {"post_type": "notice", "notice_type": "group_recall", "group_id": 100,
+         "user_id": 2, "operator_id": 3, "message_id": 888}
+    )
+    client._on_frame(
+        {"post_type": "request", "request_type": "friend", "user_id": 4, "flag": "f1"}
+    )
+    await _wait_events(received, 2)
+    assert received[0].event_type == "notice" and received[0].notice_type == "group_recall"
+    assert received[1].event_type == "request" and received[1].flag == "f1"
+
+    # echo 响应不进入 on_event
+    received.clear()
+    fut: asyncio.Future = asyncio.get_running_loop().create_future()
+    client._echo_waiters["1"] = fut
+    client._on_frame({"echo": "1", "status": "ok", "data": {"message_id": 999}})
+    assert fut.done() and fut.result()["data"]["message_id"] == 999
+    assert not received
+
+
+async def test_forward_stop_fails_waiters():
+    """正向 WS 客户端:停止时在途 API 调用立即失败(不悬挂至 30s 超时)。"""
+    from src.adapter.onebot_forward import OneBotV11Client
+
+    client = OneBotV11Client(url="ws://127.0.0.1:1")
+    fut: asyncio.Future = asyncio.get_running_loop().create_future()
+    client._echo_waiters["7"] = fut
+    await client.stop()
+    assert fut.done()
+    assert isinstance(fut.exception(), ConnectionError)
+
+
+async def test_qq_official_stop_and_msg_seq():
+    """QQ 官方适配器:停止后 webhook 拒绝;msg_seq 单调递增。"""
+    from src.adapter.qq_official import QQOfficialAdapter
+
+    adapter = QQOfficialAdapter(driver=None)
+    assert adapter._running is False
+    resp = await adapter._webhook_handler(_FakeWebRequest(b"{}"))
+    assert resp.status == 503, resp.status
+
+    # msg_seq 单调递增(QQ 官方要求,同秒多条不碰撞)
+    seqs = [adapter._next_msg_seq() for _ in range(5)]
+    assert seqs == [1, 2, 3, 4, 5], seqs
+
+
 # ---------- AstrBot 移植机制(A/B/C/D) ----------
 
 

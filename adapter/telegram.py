@@ -205,17 +205,29 @@ class TelegramAdapter(BaseAdapter):
 
     # ---------- 发送 ----------
 
+    async def _send(self, chat_id: str | int, text: str, params: dict[str, Any] | None = None) -> Any:
+        """统一发送入口:失败时告警(投递问题不能静默)。"""
+        payload = {"chat_id": int(chat_id), "text": str(text)[:4000]}
+        if params:
+            payload.update(params)
+        result = await self._api("sendMessage", **payload)
+        if result is None:
+            logger.warning("Telegram 发送失败: chat_id=%s text=%.40s", chat_id, text)
+        return result
+
     async def _reply(self, event: AgentEvent, text: str, at: bool = False) -> None:
         if not text:
             return
-        params: dict[str, Any] = {"chat_id": event.group_id or event.user_id, "text": text[:4000]}
+        params: dict[str, Any] = {}
         if at and event.message_type == "group" and event.user_id:
-            params["text"] = (
-                f'<a href="tg://user?id={event.user_id}">{html.escape(event.sender_name or "你")}</a> '
-                f"{html.escape(text, quote=False)}"
-            )
-            params["parse_mode"] = "HTML"
-        await self._api("sendMessage", **params)
+            params = {
+                "text": (
+                    f'<a href="tg://user?id={event.user_id}">{html.escape(event.sender_name or "你")}</a> '
+                    f"{html.escape(text, quote=False)}"
+                ),
+                "parse_mode": "HTML",
+            }
+        await self._send(event.group_id or event.user_id, text, params)
 
     async def send_message(self, event: AgentEvent, text: str, at: bool = False) -> Any:
         return await self._reply(event, text, at=at)
@@ -223,7 +235,7 @@ class TelegramAdapter(BaseAdapter):
     # ---------- 无 event 场景(供 Cron 等使用) ----------
 
     async def send_group_msg(self, group_id: str | int, message: str) -> Any:
-        return await self._api("sendMessage", chat_id=int(group_id), text=str(message)[:4000])
+        return await self._send(group_id, message)
 
     async def send_private_msg(self, user_id: str | int, message: str) -> Any:
-        return await self._api("sendMessage", chat_id=int(user_id), text=str(message)[:4000])
+        return await self._send(user_id, message)

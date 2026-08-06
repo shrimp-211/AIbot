@@ -62,9 +62,25 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
 
     async def stop(self) -> None:
         await self._stop_server()
-        self._connections.clear()
-        self._active_ws = None
+        async with self._lock:
+            conns = list(self._connections.values())
+            self._connections.clear()
+            self._active_ws = None
+        self._fail_pending_waiters("适配器停止")
+        for ws in conns:
+            try:
+                await ws.close()
+            except Exception:  # noqa: BLE001
+                pass
         logger.info("OneBot v11 WS 适配器已停止")
+
+    def _fail_pending_waiters(self, reason: str) -> None:
+        """在途 API 调用在连接断开/停止时立即失败,避免悬挂至 30s 超时。"""
+        pending = list(self._echo_waiters.items())
+        for echo, fut in pending:
+            if not fut.done():
+                fut.set_exception(ConnectionError(f"OneBot WebSocket {reason}"))
+        self._echo_waiters.clear()
 
     # ---------- WebSocket 连接 ----------
 
@@ -100,8 +116,12 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
                 stale = [k for k, v in self._connections.items() if v is ws]
                 for k in stale:
                     self._connections.pop(k, None)
-                if self._active_ws is ws:
+                was_active = self._active_ws is ws
+                if was_active:
                     self._active_ws = next(iter(self._connections.values()), None)
+            if was_active:
+                # 主连接断开:在途 echo 请求立即失败,避免悬挂
+                self._fail_pending_waiters("连接断开")
             logger.info(
                 f"OneBot 客户端已断开(连接数: {len(self._connections)})"
             )

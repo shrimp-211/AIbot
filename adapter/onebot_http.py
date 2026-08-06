@@ -40,6 +40,7 @@ class OneBotV11Http(ReverseServerMixin, BaseAdapter):
         self.self_id = self_id
         self._init_server(host, port, path, driver)
         self._session: aiohttp.ClientSession | None = None
+        self._running = False
 
     def _register_driver_route(self, driver: ReverseDriver, path: str) -> None:
         driver.register_http(path, self._webhook_handler, method="POST")
@@ -50,9 +51,11 @@ class OneBotV11Http(ReverseServerMixin, BaseAdapter):
     async def start(self) -> None:
         await self._start_server("OneBot v11 HTTP")
         self._session = aiohttp.ClientSession()
+        self._running = True
         logger.info(f"OneBot v11 HTTP API 端点: {self.http_url}")
 
     async def stop(self) -> None:
+        self._running = False
         await self._stop_server()
         if self._session is not None:
             await self._session.close()
@@ -62,6 +65,8 @@ class OneBotV11Http(ReverseServerMixin, BaseAdapter):
     # ---------- 事件上报接收 ----------
 
     async def _webhook_handler(self, request: web.Request) -> web.Response:
+        if not self._running:
+            return web.Response(status=503, text="Adapter stopped")
         if not self._authorized(request):
             return web.Response(status=401, text="Unauthorized")
         try:
@@ -74,9 +79,15 @@ class OneBotV11Http(ReverseServerMixin, BaseAdapter):
 
     async def _dispatch_frame(self, data: dict[str, Any]) -> None:
         try:
-            if data.get("post_type") == "message" and self.on_event is not None:
-                event = self._build_event(data)
-                await self.on_event(event)
+            if self.on_event is None:
+                return
+            post_type = data.get("post_type")
+            if post_type == "message":
+                await self.on_event(self._build_event(data))
+            elif post_type == "notice":
+                await self.on_event(self._build_notice_event(data))
+            elif post_type == "request":
+                await self.on_event(self._build_request_event(data))
         except Exception:  # noqa: BLE001
             logger.exception("HTTP 上报事件处理异常")
 
@@ -112,6 +123,41 @@ class OneBotV11Http(ReverseServerMixin, BaseAdapter):
             message_id=data.get("message_id"),
             session_id=session_id,
             is_tome=is_tome,
+            _send_callback=self._reply,
+        )
+
+    def _build_notice_event(self, data: dict[str, Any]) -> AgentEvent:
+        """构造通知事件(group_increase/group_decrease/group_recall/...)。"""
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        user_id = str(data.get("user_id", ""))
+        return AgentEvent(
+            platform="qq",
+            event_type="notice",
+            notice_type=data.get("notice_type", ""),
+            sub_type=data.get("sub_type", ""),
+            operator_id=str(data.get("operator_id", "") or ""),
+            group_id=group_id,
+            user_id=user_id,
+            message_id=data.get("message_id"),
+            session_id=group_id or user_id,
+            _send_callback=self._reply,
+        )
+
+    def _build_request_event(self, data: dict[str, Any]) -> AgentEvent:
+        """构造请求事件(friend 加好友 / group 加群)。flag 用于审批回执。"""
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        user_id = str(data.get("user_id", ""))
+        request_type = data.get("request_type", "")
+        return AgentEvent(
+            platform="qq",
+            event_type="request",
+            notice_type=request_type,  # friend | group
+            sub_type=data.get("sub_type", ""),  # group: add | invite
+            flag=str(data.get("flag", "") or ""),
+            group_id=group_id,
+            user_id=user_id,
+            raw_message=data.get("comment", ""),
+            session_id=group_id or user_id,
             _send_callback=self._reply,
         )
 

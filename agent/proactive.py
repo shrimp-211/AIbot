@@ -118,6 +118,10 @@ class CronManager:
             logger.info(f"[定时任务] {task.get('desc')}: {text}")
 
     async def _deliver(self, text: str, target_group: str | None, target_user: str | None) -> None:
+        # Agent 生成的回复是 LLM 文本,发送前转义 CQ 码防注入
+        from ..adapter.message import escape_cq
+
+        text = escape_cq(text)
         if target_group:
             await self._adapter.send_group_msg(target_group, text)
         elif target_user:
