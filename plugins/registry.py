@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import inspect
+import json
 import logging
 import re
 import sys
@@ -106,6 +107,7 @@ class PluginRegistry:
         self.sessions = SessionControl()
         self._deps: dict[type, Any] = dict(deps or {})
         self._external_ids: list[str] = []  # 外部插件注册的 handler id,供卸载/重载
+        self._plugin_meta: dict[str, dict] = {}  # 插件文件名(stem) -> plugin.json 元数据
 
     def register_dependency(self, type_: type, value: Any) -> None:
         self._deps[type_] = value
@@ -272,6 +274,20 @@ class PluginRegistry:
                 await result
         new_ids = [h.id for h in self._handlers if h.id not in before]
         self._external_ids.extend(new_ids)
+        # 读取同目录同名 plugin.json 作为插件元数据
+        meta_path = path.with_suffix(".json")
+        if meta_path.is_file():
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                if isinstance(meta, dict):
+                    self._plugin_meta[path.stem] = meta
+                else:
+                    self._plugin_meta[path.stem] = {"name": path.stem}
+            except (json.JSONDecodeError, OSError):
+                _logger.warning("插件元数据解析失败: %s", meta_path.name)
+        else:
+            self._plugin_meta[path.stem] = {"name": path.stem}
         _logger.info("外部插件已加载: %s (%d 个 handler)", path.stem, len(new_ids))
 
     def unload_external(self) -> None:
@@ -284,6 +300,11 @@ class PluginRegistry:
         for mod in list(sys.modules):
             if mod.startswith("qqbot_external_"):
                 sys.modules.pop(mod, None)
+        self._plugin_meta.clear()
+
+    def plugin_metadata(self) -> dict[str, dict]:
+        """返回已加载外部插件的元数据(键为插件文件名 stem)。"""
+        return dict(self._plugin_meta)
 
     async def reload_from_directory(self, directory: str | Path) -> list[str]:
         """先卸载全部外部插件,再重新加载。返回加载的插件名。"""

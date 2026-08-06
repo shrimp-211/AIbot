@@ -1,0 +1,8 @@
+{
+  "name": "掷骰子/抽签",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "娱乐插件:掷骰子(支持 NdM+修饰)与今日运势抽签。",
+  "commands": ["roll", "抽签"],
+  "dependencies": []
+}

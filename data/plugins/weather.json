@@ -1,0 +1,8 @@
+{
+  "name": "天气查询",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "查询天气(wttr.in 免费接口,支持中文城市,无需 API Key)。",
+  "commands": ["天气"],
+  "dependencies": ["aiohttp"]
+}

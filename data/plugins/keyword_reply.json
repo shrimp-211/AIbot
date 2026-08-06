@@ -1,0 +1,9 @@
+{
+  "name": "关键词自动回复",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "管理员配置关键词→回复,消息命中关键词自动应答。",
+  "commands": ["关键词"],
+  "dependencies": ["JsonKV"],
+  "permission_level": 4
+}

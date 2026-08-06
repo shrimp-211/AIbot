@@ -102,12 +102,19 @@ def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: Aut
 
     @registry.command("plugins", permission_level=1)
     async def list_plugins(event: AgentEvent):
-        names: set[str] = set()
-        for d in _plugin_dirs():
-            if d.is_dir():
-                names.update(p.stem for p in d.glob("*.py") if not p.name.startswith("_"))
-        lines = [f"📦 外部插件: {len(names)} 个"]
-        lines.extend(f"· {n}" for n in sorted(names))
+        meta = registry.plugin_metadata()
+        if meta:
+            lines = [f"📦 外部插件: {len(meta)} 个"]
+            for stem, m in sorted(meta.items()):
+                name = m.get("name") or stem
+                ver = m.get("version", "")
+                desc = m.get("description", "")
+                line = f"· {name}" + (f" v{ver}" if ver else "")
+                if desc:
+                    line += f" — {desc}"
+                lines.append(line)
+        else:
+            lines = ["📦 无外部插件"]
         lines.append(f"内置 handler: {registry.handler_count()} 个")
         await event.reply("\n".join(lines))
         return None

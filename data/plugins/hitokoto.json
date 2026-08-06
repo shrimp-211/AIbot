@@ -1,0 +1,8 @@
+{
+  "name": "一言",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "从公开接口拉取一句佳句,网络不可用时回退到本地诗词库。",
+  "commands": ["一言"],
+  "dependencies": ["aiohttp"]
+}

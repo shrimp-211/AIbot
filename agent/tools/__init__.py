@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from ...security.auth import AuthManager
 from .base import ToolRegistry
-from .file_tools import FileReadTool, FileWriteTool, GlobTool, GrepTool
+from .file_tools import FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool
 from .knowledge import KnowledgeAddTool, KnowledgeSearchTool
 from .memory_tools import MemoryAddTool, MemoryListTool, MemorySearchTool
 from .mcp_tools import MCPServerListTool
@@ -35,6 +35,7 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         WebFetchTool(),
         FileReadTool(),
         FileWriteTool(),
+        FileEditTool(),
         GlobTool(),
         GrepTool(),
         BashTool(),

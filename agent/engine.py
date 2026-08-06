@@ -66,6 +66,7 @@ class AgentEngine:
         self.mcp_manager = mcp_manager
         self.audit_logger = audit_logger
         self._static_prompt: str | None = None
+        self.messages_processed = 0  # 累计处理消息数(WebUI 统计)
 
         if self.subagent_manager is None:
             from .subagent import SubagentManager
@@ -79,6 +80,7 @@ class AgentEngine:
         if event.is_stopped:
             return None
 
+        self.messages_processed += 1
         text = event.plain_text.strip()
         if not text and event.is_tome:
             text = "(用户@了你)"
@@ -226,8 +228,17 @@ class AgentEngine:
             f"🟢 运行正常\n"
             f"模型: {model} ({ptype})\n"
             f"工具数: {len(self.tools.names())}\n"
+            f"已处理消息: {self.messages_processed}\n"
             f"记忆: 三层记忆已启用"
         )
+
+    def stats(self) -> dict[str, Any]:
+        """引擎运行统计,供 WebUI 状态页展示。"""
+        return {
+            "messages_processed": self.messages_processed,
+            "tools": len(self.tools.names()),
+            "provider": type(self.provider).__name__,
+        }
 
     # ---------- Prompt 构建 ----------
 
@@ -379,15 +390,24 @@ class AgentEngine:
                 }
             )
 
-            for tc in tool_calls:
+            async def _run_one(tc: dict) -> str:
                 output = await self._execute_tool(ctx, tc)
-                messages.append(
-                    {"role": "tool", "tool_call_id": tc["id"], "content": output}
-                )
                 if self.hooks:
                     await self.hooks.trigger(
                         "post_tool_use", tool_name=tc.get("name", ""), output=output
                     )
+                return output
+
+            # 并行执行多个工具调用(参考 Claude Code/Codex 的并行工具)
+            if len(tool_calls) > 1:
+                outputs = await asyncio.gather(*(_run_one(tc) for tc in tool_calls))
+            else:
+                outputs = [await _run_one(tool_calls[0])]
+
+            for tc, output in zip(tool_calls, outputs):
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc["id"], "content": output}
+                )
                 if self._tool_awaiting(output):
                     # ask_user:本轮到此为止,等待用户回复后再继续
                     return None

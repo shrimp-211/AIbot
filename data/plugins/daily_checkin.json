@@ -1,0 +1,8 @@
+{
+  "name": "每日签到",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "每日签到积累积分,支持连续签到加成与积分排行。",
+  "commands": ["签到", "我的积分", "签到排行"],
+  "dependencies": ["JsonKV"]
+}

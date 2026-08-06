@@ -1,0 +1,8 @@
+{
+  "name": "外部插件示例",
+  "version": "0.1.0",
+  "author": "shrimp-211",
+  "description": "演示外部插件编写方式:命令注册与依赖注入(Config)。",
+  "commands": ["plugin_echo", "uptime"],
+  "dependencies": ["Config"]
+}

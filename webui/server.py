@@ -159,6 +159,7 @@ class WebUIServer:
             return web.json_response({"ok": False, "error": "未授权"}, status=401)
         engine = self._deps.get("engine")
         tools = self._deps.get("tools")
+        stats = engine.stats() if engine and hasattr(engine, "stats") else {}
         return web.json_response(
             {
                 "ok": True,
@@ -167,6 +168,7 @@ class WebUIServer:
                 "model": self._config.get("llm.provider.model", ""),
                 "provider": self._config.get("llm.provider.type", ""),
                 "tools_count": len(tools.names()) if tools else 0,
+                "messages_processed": stats.get("messages_processed", 0),
                 "connected": bool(self._deps.get("adapter_connected")),
             }
         )

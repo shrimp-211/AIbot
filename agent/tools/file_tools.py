@@ -87,6 +87,58 @@ class FileWriteTool(Tool):
         return {"path": str(fp), "bytes": len(content.encode("utf-8")), "ok": True}
 
 
+class FileEditTool(Tool):
+    name = "file_edit"
+    description = "在文件中精确查找并替换文本(每次一处,old_string 必须唯一匹配)"
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "文件路径"},
+            "old_string": {"type": "string", "description": "要查找的原文,需在文件中唯一出现"},
+            "new_string": {"type": "string", "description": "替换为的新文本"},
+        },
+        "required": ["path", "old_string", "new_string"],
+    }
+
+    async def execute(self, ctx: ToolContext, path: str, old_string: str, new_string: str) -> Any:
+        if not old_string:
+            return {"error": "old_string 不能为空"}
+        if len(old_string) > 100_000 or len(new_string) > 100_000:
+            return {"error": "编辑内容过长(>100000字符)"}
+        role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
+        _check_file_access(ctx.auth, role, path)
+        fp = _resolve_path(ctx.config.get("agent.workdir", "."), path)
+        if not fp.exists() or not fp.is_file():
+            return {"error": f"文件不存在: {path}"}
+        loop = ctx.extra["loop"]
+        try:
+            content = await loop.run_in_executor(None, fp.read_text, "utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            return {"error": f"读取失败: {exc}"}
+        count = content.count(old_string)
+        if count == 0:
+            return {"error": "未找到要替换的文本,请先用 file_read 核对文件内容"}
+        if count > 1:
+            return {"error": f"old_string 出现 {count} 次,请提供更长的上下文使其唯一匹配"}
+        new_content = content.replace(old_string, new_string)
+
+        def _write() -> None:
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(new_content)
+
+        try:
+            await loop.run_in_executor(None, _write)
+        except OSError as exc:
+            return {"error": f"写入失败: {exc}"}
+        return {
+            "path": str(fp),
+            "ok": True,
+            "replaced": count,
+            "bytes": len(new_content.encode("utf-8")),
+            "preview": new_string[:200],
+        }
+
+
 class GlobTool(Tool):
     name = "glob"
     description = "按 glob 模式查找文件路径"
