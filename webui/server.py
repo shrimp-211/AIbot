@@ -19,8 +19,41 @@ from loguru import logger
 import yaml
 
 from ..adapter.event import AgentEvent
-from ..adapter.message import MessageChain, MessageSegment
+from ..adapter.message import MessageChain, MessageSegment, escape_cq
 from ..utils.config import Config, save_config, validate_config
+
+# 配置视图中的敏感项掩码:不向浏览器泄露 api_key/app_secret/token 等明文
+_SECRET_MASK = "***(已配置)***"
+
+
+def _is_secret_key(key: str) -> bool:
+    k = key.lower()
+    return (
+        k in ("api_key", "app_secret", "sign_secret", "password", "token", "access_token")
+        or "secret" in k
+        or k.endswith("_key")
+        or k.endswith("_token")
+    )
+
+
+def _mask_secrets(data: Any) -> Any:
+    """递归掩码非空敏感值,供配置视图展示。"""
+    if isinstance(data, dict):
+        return {
+            k: (_SECRET_MASK if _is_secret_key(k) and isinstance(v, str) and v else _mask_secrets(v))
+            for k, v in data.items()
+        }
+    return data
+
+
+def _restore_secrets(data: Any, current: Any) -> None:
+    """把视图保存回的掩码占位符替换为当前真实值,避免掩码落盘覆盖密钥。"""
+    if isinstance(data, dict) and isinstance(current, dict):
+        for k, v in data.items():
+            if v == _SECRET_MASK and isinstance(current.get(k), str) and current[k]:
+                data[k] = current[k]
+            else:
+                _restore_secrets(v, current.get(k))
 
 STATIC_DIR = Path(__file__).parent / "static"
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -295,7 +328,8 @@ class WebUIServer:
                 {"ok": False, "error": "QQ 适配器未连接"}, status=500
             )
         try:
-            await adapter.send_group_msg(group_id, text)
+            # 广播文本按发送边界转义,防管理员输入中包含的 [ 被解析为 CQ 码
+            await adapter.send_group_msg(group_id, escape_cq(text))
         except Exception as exc:  # noqa: BLE001
             logger.exception("WebUI 广播失败")
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
@@ -336,6 +370,13 @@ class WebUIServer:
             )
         except OSError:
             content = ""
+        # 视图掩码敏感项:api_key/app_secret/sign_secret/token/password 等不暴露明文
+        try:
+            data = yaml.safe_load(content)
+        except yaml.YAMLError:
+            data = None
+        if isinstance(data, dict):
+            content = yaml.safe_dump(_mask_secrets(data), allow_unicode=True, sort_keys=False)
         return web.json_response({"ok": True, "content": content, "path": str(self._config_path)})
 
     async def _config_save(self, request: web.Request) -> web.Response:
@@ -360,6 +401,8 @@ class WebUIServer:
             return web.json_response(
                 {"ok": False, "error": "配置校验失败", "errors": errors[:20]}, status=400
             )
+        # 视图里的掩码占位符不落盘:回填当前真实值,防止保存空掩码覆盖密钥
+        _restore_secrets(new_data, self._config.raw() or {})
         try:
             def _write() -> tuple[str, list[str]]:
                 backup = self._config_path.read_text(encoding="utf-8")[:200] if self._config_path.is_file() else ""

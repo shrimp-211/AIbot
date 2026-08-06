@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...adapter.message import escape_cq
 from .base import Tool, ToolContext
 
 
@@ -18,7 +19,7 @@ class QqSendImageTool(Tool):
     }
 
     async def execute(self, ctx: ToolContext, image_url: str) -> Any:
-        cq = f"[CQ:image,file={image_url}]"
+        cq = f"[CQ:image,file={escape_cq(image_url)}]"
         if ctx.event.message_type == "group" and ctx.event.group_id:
             await ctx.adapter.send_group_msg(ctx.event.group_id, cq)
         else:
@@ -38,7 +39,7 @@ class QqSendVoiceTool(Tool):
     }
 
     async def execute(self, ctx: ToolContext, file: str) -> Any:
-        cq = f"[CQ:record,file={file}]"
+        cq = f"[CQ:record,file={escape_cq(file)}]"
         if ctx.event.message_type == "group" and ctx.event.group_id:
             await ctx.adapter.send_group_msg(ctx.event.group_id, cq)
         else:

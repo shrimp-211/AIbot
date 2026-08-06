@@ -126,8 +126,9 @@ class AuthManager:
         self._approval_ttl = 600  # 审批码有效期(秒)
         # 工具级交互审批(Claude Code 权限批准):user_id -> 待审批的工具请求
         self.pending_tool_approvals: dict[str, dict] = {}
-        # 短期放行(user_id, tool) -> {"ts", "ttl"}:批准后 TTL 内同用户同工具跳过工具级门禁
-        self._temp_tool_allows: dict[tuple[str, str], dict] = {}
+        # 短期放行(user_id, tool, session_id) -> {"ts", "ttl"}:
+        # 批准后 TTL 内仅该会话内同用户同工具跳过工具级门禁,避免跨会话滥用
+        self._temp_tool_allows: dict[tuple[str, str, str], dict] = {}
         self._tool_approval_ttl = 120  # 工具审批请求/放行有效期(秒)
 
     # ---------- 角色 ----------
@@ -147,11 +148,15 @@ class AuthManager:
     # ---------- 可信目录 / 沙箱 ----------
 
     def is_path_trusted(self, path: str) -> bool:
-        """检查路径是否位于可信目录内(空列表 = 全部路径可信)。"""
+        """检查路径是否位于可信目录内(空列表 = 全部路径可信)。
+
+        用路径祖先判定而非字符串前缀,避免兄弟目录(/data/trusted_evil)绕过
+        /data/trusted 的边界检查。
+        """
         if not self.trusted_folders:
             return True
         resolved = Path(path).resolve()
-        return any(str(resolved).startswith(str(f)) for f in self.trusted_folders)
+        return any(resolved == f or f in resolved.parents for f in self.trusted_folders)
 
     # ---------- 配对审批(OpenClaw pairing) ----------
 
@@ -198,14 +203,23 @@ class AuthManager:
     # ---------- 工具级交互审批(Claude Code 权限批准) ----------
 
     def request_tool_approval(
-        self, user_id: str, tool: str, args: dict, group_id: str | None = None
+        self,
+        user_id: str,
+        tool: str,
+        args: dict,
+        group_id: str | None = None,
+        session_id: str | None = None,
     ) -> dict:
-        """登记一条待审批的工具请求,返回记录(重复请求刷新时间)。"""
+        """登记一条待审批的工具请求,返回记录(重复请求刷新时间)。
+
+        session_id 记录请求所在会话,批准后仅在该会话内放行。
+        """
         self._expire_tool_approvals()
         self.pending_tool_approvals[user_id] = {
             "tool": tool,
             "args": args,
             "group_id": group_id,
+            "session_id": session_id,
             "ts": time.time(),
         }
         return self.pending_tool_approvals[user_id]
@@ -221,7 +235,12 @@ class AuthManager:
         if not record:
             return {"error": "没有待审批的工具请求"}
         if approved:
-            self.allow_tool(user_id, record["tool"], ttl=self._tool_approval_ttl)
+            self.allow_tool(
+                user_id,
+                record["tool"],
+                ttl=self._tool_approval_ttl,
+                session_id=record.get("session_id"),
+            )
         return {"ok": True, "tool": record["tool"], "approved": approved}
 
     def _expire_tool_approvals(self) -> None:
@@ -234,17 +253,18 @@ class AuthManager:
         for uid in stale:
             self.pending_tool_approvals.pop(uid, None)
 
-    def allow_tool(self, user_id: str, tool: str, ttl: float = 120) -> None:
-        """批准后短期放行:TTL 内同用户同工具跳过工具级门禁(定期清理防泄漏)。
+    def allow_tool(self, user_id: str, tool: str, ttl: float = 120, session_id: str | None = None) -> None:
+        """批准后短期放行:TTL 内该会话内同用户同工具跳过工具级门禁(定期清理防泄漏)。
 
         仅绕过规则门禁;工具内部的 path/command 安全检查仍生效。
+        限定会话(session_id)避免在群 A 批准的工具被拿到群 B 复用。
         """
         self._prune_temp_allows()
-        self._temp_tool_allows[(user_id, tool)] = {"ts": time.time(), "ttl": ttl}
+        self._temp_tool_allows[(user_id, tool, session_id)] = {"ts": time.time(), "ttl": ttl}
 
-    def is_tool_allowed(self, user_id: str, tool: str) -> bool:
+    def is_tool_allowed(self, user_id: str, tool: str, session_id: str | None = None) -> bool:
         self._prune_temp_allows()
-        return (user_id, tool) in self._temp_tool_allows
+        return (user_id, tool, session_id) in self._temp_tool_allows
 
     def _prune_temp_allows(self) -> None:
         now = time.time()
@@ -335,12 +355,23 @@ def _is_private_ip(addr) -> bool:
 
 
 def _parse_alt_ip(hostname: str) -> ipaddress.IPv4Address | None:
-    """解析非标准 IP 字面量:十进制整数(2130706433)与十六进制(0x7f000001)。"""
-    if re.fullmatch(r"0x[0-9a-fA-F]+", hostname):
+    """解析非标准 IP 字面量:十进制整数(2130706433)、十六进制(0x7f000001)、
+    八进制点分(0127.0.0.1)。统一小写,避免 0X 大写前缀绕过。"""
+    hostname = hostname.lower()
+    if re.fullmatch(r"0x[0-9a-f]+", hostname):
         try:
             return ipaddress.IPv4Address(int(hostname, 16))
         except (ValueError, ipaddress.AddressValueError):
             return None
+    # 八进制点分(inet_aton 语义):某段以 0 开头且不止一位,按 8 进制解析
+    parts = hostname.split(".")
+    if len(parts) == 4 and any(p.startswith("0") and len(p) > 1 for p in parts):
+        try:
+            octets = [int(p, 8) for p in parts]
+        except ValueError:
+            return None
+        if all(0 <= o <= 255 for o in octets):
+            return ipaddress.IPv4Address(tuple(octets))
     if hostname.isdigit() and len(hostname) <= 10:
         try:
             return ipaddress.IPv4Address(int(hostname))

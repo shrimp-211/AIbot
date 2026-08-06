@@ -31,7 +31,8 @@ def setup(registry) -> None:
                     if sd <= now <= ed:
                         title = escape_cq(item.get("title","未知"))
                         slug = item.get("productSlug","")
-                        link = f"https://store.epicgames.com/zh-CN/p/{slug}" if slug else ""
+                        # slug 来自外部 API,拼接进链接前需转义,防 CQ 注入
+                        link = f"https://store.epicgames.com/zh-CN/p/{escape_cq(slug)}" if slug else ""
                         games.append(f"{title}\n{link}")
                         break
         if not games:

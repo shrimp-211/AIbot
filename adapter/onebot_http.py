@@ -17,12 +17,12 @@ from aiohttp import web
 from loguru import logger
 
 from .base import BaseAdapter
-from .driver import ReverseDriver, ReverseServerMixin
+from .driver import ReverseDriver, ReverseServerMixin, TaskTrackerMixin
 from .event import AgentEvent
 from .onebot_events import build_message_event, build_notice_event, build_request_event
 
 
-class OneBotV11Http(ReverseServerMixin, BaseAdapter):
+class OneBotV11Http(TaskTrackerMixin, ReverseServerMixin, BaseAdapter):
     platform = "qq"
 
     def __init__(
@@ -41,6 +41,7 @@ class OneBotV11Http(ReverseServerMixin, BaseAdapter):
         self._init_server(host, port, path, driver)
         self._session: aiohttp.ClientSession | None = None
         self._running = False
+        self._tasks: set[asyncio.Task] = set()
 
     def _register_driver_route(self, driver: ReverseDriver, path: str) -> None:
         driver.register_http(path, self._webhook_handler, method="POST")
@@ -57,6 +58,7 @@ class OneBotV11Http(ReverseServerMixin, BaseAdapter):
     async def stop(self) -> None:
         self._running = False
         await self._stop_server()
+        await self._drain_tasks()
         if self._session is not None:
             await self._session.close()
             self._session = None
@@ -74,7 +76,7 @@ class OneBotV11Http(ReverseServerMixin, BaseAdapter):
         except (json.JSONDecodeError, UnicodeDecodeError):
             logger.warning("HTTP 上报 JSON 解析失败")
             return web.Response(status=400, text="Invalid JSON")
-        asyncio.create_task(self._dispatch_frame(data))
+        self._spawn(self._dispatch_frame(data))
         return web.Response(status=200, text="OK")
 
     async def _dispatch_frame(self, data: dict[str, Any]) -> None:

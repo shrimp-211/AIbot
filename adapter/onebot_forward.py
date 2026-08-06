@@ -16,11 +16,12 @@ import aiohttp
 from loguru import logger
 
 from .base import BaseAdapter
+from .driver import TaskTrackerMixin
 from .event import AgentEvent
 from .onebot_events import build_message_event, build_notice_event, build_request_event
 
 
-class OneBotV11Client(BaseAdapter):
+class OneBotV11Client(TaskTrackerMixin, BaseAdapter):
     platform = "qq"
 
     def __init__(
@@ -40,6 +41,7 @@ class OneBotV11Client(BaseAdapter):
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._running = False
+        self._tasks: set[asyncio.Task] = set()
         self._loop_task: asyncio.Task | None = None
         self._echo_waiters: dict[str, asyncio.Future] = {}
         self._seq = 0
@@ -70,6 +72,7 @@ class OneBotV11Client(BaseAdapter):
             self._session = None
         # 停止时立即失败在途 API 调用,避免悬挂至 30s 超时
         self._fail_pending_waiters("适配器停止")
+        await self._drain_tasks()
         logger.info("OneBot v11 正向 WS 客户端已停止")
 
     def _fail_pending_waiters(self, reason: str) -> None:
@@ -137,11 +140,11 @@ class OneBotV11Client(BaseAdapter):
             return
         post_type = data.get("post_type")
         if post_type == "message":
-            asyncio.create_task(self.on_event(self._build_event(data)))
+            self._spawn(self.on_event(self._build_event(data)))
         elif post_type == "notice":
-            asyncio.create_task(self.on_event(self._build_notice_event(data)))
+            self._spawn(self.on_event(self._build_notice_event(data)))
         elif post_type == "request":
-            asyncio.create_task(self.on_event(self._build_request_event(data)))
+            self._spawn(self.on_event(self._build_request_event(data)))
 
     def _build_event(self, data: dict[str, Any]) -> AgentEvent:
         return build_message_event("qq", self.self_id, data, self._reply)

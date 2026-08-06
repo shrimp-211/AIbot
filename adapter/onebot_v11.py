@@ -10,6 +10,7 @@ OneBot 客户端的连接,实现全双工通信:接收消息事件 + echo 关联
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import time
 from typing import Any
@@ -18,12 +19,12 @@ from aiohttp import WSMsgType, web
 from loguru import logger
 
 from .base import BaseAdapter
-from .driver import ReverseDriver, ReverseServerMixin
+from .driver import ReverseDriver, ReverseServerMixin, TaskTrackerMixin
 from .event import AgentEvent
 from .onebot_events import build_message_event, build_notice_event, build_request_event
 
 
-class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
+class OneBotV11Adapter(TaskTrackerMixin, ReverseServerMixin, BaseAdapter):
     platform = "qq"
 
     def __init__(
@@ -39,6 +40,7 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
         self.token = token
         self._init_server(host, port, path, driver)
         self._running = False
+        self._tasks: set[asyncio.Task] = set()
         # 多连接管理:key = 客户端 self_id(缺省 "default")
         self._connections: dict[str, web.WebSocketResponse] = {}
         self._active_ws: web.WebSocketResponse | None = None
@@ -75,6 +77,7 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
                 await ws.close()
             except Exception:  # noqa: BLE001
                 pass
+        await self._drain_tasks()
         logger.info("OneBot v11 WS 适配器已停止")
 
     def _fail_pending_waiters(self, reason: str) -> None:
@@ -93,7 +96,7 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
             return web.Response(status=503, text="Service Stopped")
         if self.token:
             auth = request.headers.get("Authorization", "")
-            if auth != f"Bearer {self.token}":
+            if not hmac.compare_digest(auth, f"Bearer {self.token}"):
                 logger.warning("WebSocket 连接鉴权失败")
                 return web.Response(status=401, text="Unauthorized")
 
@@ -147,18 +150,18 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
         if post_type == "message":
             sid = str(data.get("self_id", "") or "")
             if sid:
-                asyncio.create_task(self._adopt_connection(sid, ws))
+                self._spawn(self._adopt_connection(sid, ws))
             self._active_ws = ws
-            asyncio.create_task(self._handle_message(data))
+            self._spawn(self._handle_message(data))
         elif post_type in ("notice", "request"):
             # 通知/请求事件同样按 self_id 归位,交给管道处理
             sid = str(data.get("self_id", "") or "")
             if sid:
-                asyncio.create_task(self._adopt_connection(sid, ws))
+                self._spawn(self._adopt_connection(sid, ws))
             if post_type == "notice":
-                asyncio.create_task(self._handle_notice(data))
+                self._spawn(self._handle_notice(data))
             else:
-                asyncio.create_task(self._handle_request(data))
+                self._spawn(self._handle_request(data))
 
     async def _adopt_connection(self, sid: str, ws: web.WebSocketResponse) -> None:
         """按消息中的 self_id 将连接归位,支持多机器人同时在线。"""

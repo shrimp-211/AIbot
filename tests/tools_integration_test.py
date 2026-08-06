@@ -218,6 +218,52 @@ async def test_react_loop_mock():
     assert reply == "这是 mock 的最终回复。", reply
 
 
+async def test_parallel_tool_pairing():
+    """并行工具调用:所有 tool 结果在下一轮 LLM 调用前完整配对(#77 回归)。
+
+    修复前:任一工具挂起(ask_user/审批)时提前 return,会丢弃其余并行工具的
+    tool 结果,下一轮历史出现"assistant 声明 N 个 tool_calls 却只有 <N 个
+    tool 结果"的配对缺失,各 provider 均拒绝该请求。
+    """
+    auth, db, tmp, ctx = await make_env()
+    reg = build_default_registry(auth)
+
+    class PairingProvider(BaseProvider):
+        def __init__(self) -> None:
+            super().__init__({"model": "mock", "max_tokens": 512})
+            self.calls = 0
+
+        async def test(self) -> bool:
+            return True
+
+        async def chat(self, messages, system_prompt=None, tools=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "call_a", "name": "task", "arguments": {"sub_action": "create", "title": "并行A"}},
+                        {"id": "call_b", "name": "task", "arguments": {"sub_action": "create", "title": "并行B"}},
+                    ],
+                }
+            # 第二轮:必须能看到两个 tool 结果,否则配对不完整
+            tool_ids = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
+            assert {"call_a", "call_b"} <= tool_ids, f"并行工具结果未完整配对: {tool_ids}"
+            return {"content": "并行任务已全部完成。", "tool_calls": []}
+
+    engine = AgentEngine(
+        provider=PairingProvider(),
+        tools=reg,
+        memory=MemoryStore(db),
+        auth=auth,
+        config=Config({}),
+        adapter=None,
+        db=db,
+    )
+    reply = await engine.process(ctx.event)
+    assert reply == "并行任务已全部完成。", reply
+
+
 # ---------- 运行器 ----------
 
 async def run_all() -> bool:

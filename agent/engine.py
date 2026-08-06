@@ -130,6 +130,10 @@ class AgentEngine:
 
             self.subagent_manager = SubagentManager(self.provider, self.config)
 
+    def set_adapter(self, adapter: Any) -> None:
+        """注入默认发送适配器(构造时可能尚不存在,由 main.py 启动期回填)。"""
+        self.adapter = adapter
+
     # ---------- 入口 ----------
 
     async def process(self, event: AgentEvent) -> str | None:
@@ -143,7 +147,8 @@ class AgentEngine:
             text = "(用户@了你)"
 
         # 工具审批续接:上一轮请求权限批准,本轮检测用户的允许/拒绝(Claude Code 权限批准)
-        # 放在 fast path 之前,确保审批回复优先处理,且非审批回复(含 STOP)会放弃挂起的审批
+        # 放在 fast path 之前,确保审批回复优先处理。仅"明确的审批答复"或"明确中止(STOP)"
+        # 才结算审批;普通消息(无关的新请求)保留挂起审批,用户仍可在后续回复中应答。
         approval_reply = False
         pending = self.auth.get_pending_tool_approval(event.user_id)
         if pending:
@@ -153,9 +158,10 @@ class AgentEngine:
                 self.auth.resolve_tool_approval(event.user_id, decision == "approve")
                 event.state["approval_decision"] = decision
                 event.state["approval_tool"] = pending["tool"]
-            else:
-                # 用户转向新请求(或要求停止):放弃挂起的审批
+            elif text.strip().upper() in ("STOP", "停止", "停", "结束", "退出"):
+                # 用户明确中止会话:放弃挂起的审批(避免残留到 TTL)
                 self.auth.resolve_tool_approval(event.user_id, False)
+            # 其余普通消息:不触碰挂起审批
 
         fast = self._nlu_fast_path(event, text)
         if fast is not None:
@@ -535,13 +541,17 @@ class AgentEngine:
             else:
                 outputs = [await _run_one(tool_calls[0])]
 
+            # 一次性把全部工具结果追加进消息,保证 assistant(tool_calls) 与 tool 结果严格配对。
+            # 否则任一个 ask_user/审批挂起提前 return,会丢弃其余并行调用的结果,
+            # 下一轮历史变成"assistant 声明 N 个 tool_calls 却只有 <N 个 tool 结果",各 provider 均拒绝。
+            any_awaiting = False
             for tc, output in zip(tool_calls, outputs):
                 if self._tool_awaiting(output):
-                    # ask_user:本轮到此为止,等待用户回复后再继续
+                    any_awaiting = True
                     messages.append(
                         {"role": "tool", "tool_call_id": tc["id"], "content": output}
                     )
-                    return None
+                    continue
                 # 重复工具调用检测:连续相同(名+参数)达到阈值时注入分级指导
                 name = tc.get("name", "")
                 args = tc.get("arguments") or {}
@@ -558,6 +568,10 @@ class AgentEngine:
                         "content": output + _repeated_tool_guidance(name, same_tool_streak),
                     }
                 )
+            if any_awaiting:
+                # ask_user/审批挂起:消息历史已完整(所有 tool_calls 都有对应 tool 结果),
+                # 等待用户回复后再继续(下一轮进入审批续接)
+                return None
 
         return "任务步骤较多,已完成主要部分。如需继续处理,请告诉我下一步。"
 
@@ -584,8 +598,8 @@ class AgentEngine:
             if decision == "block":
                 return "该工具调用已被策略阻止"
 
-        # 一次性授权:用户已批准执行该工具(交互式审批),跳过权限检查
-        force = self.auth.is_tool_allowed(ctx.event.user_id, name)
+        # 一次性授权:用户已批准执行该工具(交互式审批),跳过权限检查(按会话限定)
+        force = self.auth.is_tool_allowed(ctx.event.user_id, name, ctx.event.session_id)
         try:
             result = await self.tools.execute(
                 name, role_level, ctx, _skip_permission=force, **args
@@ -627,7 +641,9 @@ class AgentEngine:
             # 审批请求未送达:不挂起审批,避免用户从未看到请求却被静默批准
             logger.exception("发送审批请求失败")
             return "审批请求发送失败,请稍后再试。"
-        record = self.auth.request_tool_approval(user_id, exc.tool_name, exc.args)
+        record = self.auth.request_tool_approval(
+            user_id, exc.tool_name, exc.args, session_id=ctx.event.session_id
+        )
         logger.info("工具 {} 请求审批(user={}, ts={:.0f})", exc.tool_name, user_id, record["ts"])
         return json.dumps(
             {

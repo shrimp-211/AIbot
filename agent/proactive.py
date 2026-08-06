@@ -40,6 +40,10 @@ class CronManager:
         """注入主 Agent 引擎:定时任务触发时经 Agent 生成内容(参照 AstrBot Cron active_agent)。"""
         self._engine = engine
 
+    def set_adapter(self, adapter: Any) -> None:
+        """注入发送适配器:定时任务经它发消息(构造时可能尚不存在,由 main.py 启动期回填)。"""
+        self._adapter = adapter
+
     # ---------- 生命周期 ----------
 
     async def start(self) -> None:

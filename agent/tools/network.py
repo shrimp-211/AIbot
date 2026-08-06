@@ -15,6 +15,16 @@ _MAX_REDIRECTS = 5
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
 
+# 进程级共享客户端:复用连接池,避免每次调用重建 AsyncClient
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=20, headers={"User-Agent": UA})
+    return _client
+
 
 class WebSearchTool(Tool):
     name = "web_search"
@@ -42,49 +52,49 @@ class WebSearchTool(Tool):
         return {"error": "所有搜索引擎均失败", "details": errors[:2]}
 
     async def _search(self, engine: str, ctx: ToolContext, query: str, n: int) -> list[dict] | None:
-        async with httpx.AsyncClient(timeout=15, headers={"User-Agent": UA}) as client:
-            if engine == "tavily":
-                api_key = ctx.config.get("search.tavily_key", "")
-                if not api_key:
-                    return None
-                resp = await client.post(
-                    "https://api.tavily.com/search",
-                    json={"api_key": api_key, "query": query, "max_results": n},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return [
-                    {
-                        "title": r.get("title", ""),
-                        "url": r.get("url", ""),
-                        "content": r.get("content", "")[:500],
-                    }
-                    for r in data.get("results", [])[:n]
-                ]
+        client = _get_client()
+        if engine == "tavily":
+            api_key = ctx.config.get("search.tavily_key", "")
+            if not api_key:
+                return None
+            resp = await client.post(
+                "https://api.tavily.com/search",
+                json={"api_key": api_key, "query": query, "max_results": n},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return [
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "content": r.get("content", "")[:500],
+                }
+                for r in data.get("results", [])[:n]
+            ]
 
-            if engine == "brave":
-                api_key = ctx.config.get("search.brave_key", "")
-                if not api_key:
-                    return None
-                resp = await client.get(
-                    "https://api.search.brave.com/res/v1/web/search",
-                    params={"q": query, "count": n},
-                    headers={"X-Subscription-Token": api_key},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return [
-                    {"title": r.get("title", ""), "url": r.get("url", ""), "content": (r.get("description") or "")[:500]}
-                    for r in data.get("web", {}).get("results", [])[:n]
-                ]
+        if engine == "brave":
+            api_key = ctx.config.get("search.brave_key", "")
+            if not api_key:
+                return None
+            resp = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": n},
+                headers={"X-Subscription-Token": api_key},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return [
+                {"title": r.get("title", ""), "url": r.get("url", ""), "content": (r.get("description") or "")[:500]}
+                for r in data.get("web", {}).get("results", [])[:n]
+            ]
 
-            if engine == "duckduckgo":
-                resp = await client.get(
-                    "https://html.duckduckgo.com/html/",
-                    params={"q": query},
-                )
-                resp.raise_for_status()
-                return self._parse_ddg(resp.text, n)
+        if engine == "duckduckgo":
+            resp = await client.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+            )
+            resp.raise_for_status()
+            return self._parse_ddg(resp.text, n)
 
     @staticmethod
     def _parse_ddg(html: str, n: int) -> list[dict]:
@@ -122,25 +132,23 @@ class WebFetchTool(Tool):
 
     async def execute(self, ctx: ToolContext, url: str, max_length: int = 8000) -> Any:
         try:
-            async with httpx.AsyncClient(
-                timeout=20, follow_redirects=False, headers={"User-Agent": UA}
-            ) as client:
-                # 手动跟随重定向,每一跳都做 SSRF 校验,防止公网 URL 302 到内网
-                current = url
-                for _ in range(_MAX_REDIRECTS + 1):
-                    if not await is_safe_url_async(current):
-                        return {"error": "URL 不合法或指向内网地址,已被拦截"}
-                    resp = await client.get(current)
-                    if resp.status_code in _REDIRECT_STATUS:
-                        location = resp.headers.get("location")
-                        if not location:
-                            return {"error": "抓取失败: 重定向缺少 Location"}
-                        current = urljoin(current, location)
-                        continue
-                    resp.raise_for_status()
-                    text = self._html_to_text(resp.text)
-                    return text[: int(max_length or 8000)]
-                return {"error": f"抓取失败: 重定向超过 {_MAX_REDIRECTS} 次"}
+            client = _get_client()
+            # 手动跟随重定向,每一跳都做 SSRF 校验,防止公网 URL 302 到内网
+            current = url
+            for _ in range(_MAX_REDIRECTS + 1):
+                if not await is_safe_url_async(current):
+                    return {"error": "URL 不合法或指向内网地址,已被拦截"}
+                resp = await client.get(current)
+                if resp.status_code in _REDIRECT_STATUS:
+                    location = resp.headers.get("location")
+                    if not location:
+                        return {"error": "抓取失败: 重定向缺少 Location"}
+                    current = urljoin(current, location)
+                    continue
+                resp.raise_for_status()
+                text = self._html_to_text(resp.text)
+                return text[: int(max_length or 8000)]
+            return {"error": f"抓取失败: 重定向超过 {_MAX_REDIRECTS} 次"}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"抓取失败: {exc}"}
 

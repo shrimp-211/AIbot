@@ -9,10 +9,12 @@ WebSocket / HTTP 路由,避免每个适配器各自开端口、互不感知。
 
 主动发起连接的适配器(正向 WS 客户端、Telegram 长轮询)不依赖本驱动。
 
-`ReverseServerMixin` 供被动接收类适配器复用 driver/自持端口两套生命周期。
+`ReverseServerMixin` 供被动接收类适配器复用 driver/自持端口两套生命周期;
+`TaskTrackerMixin` 供所有适配器管理 fire-and-forget 后台任务(drain on shutdown)。
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 from typing import Any, Callable
 
@@ -152,3 +154,43 @@ class ReverseServerMixin:
             return True
         actual = request.headers.get("Authorization", "")
         return hmac.compare_digest(actual, f"Bearer {self.token}")
+
+
+class TaskTrackerMixin:
+    """跟踪 fire-and-forget 后台任务,关闭时统一取消(drain on shutdown)。
+
+    每个 webhook/WS 帧各开一个无人管理的 task 会导致:关闭时在途任务
+    悬挂、异常无人回收。子类在 `__init__` 中初始化 `self._tasks` 集合,
+    用 `self._spawn(coro)` 替代裸 `asyncio.create_task(...)`,
+    并在 `stop()` 中调用 `await self._drain_tasks()`。
+    """
+
+    def _spawn(self, coro: Any) -> asyncio.Task:
+        """创建并跟踪一个后台任务;完成后自动从集合移除。"""
+        task = asyncio.get_running_loop().create_task(coro)
+        task.add_done_callback(self._on_task_done)
+        self._tasks.add(task)
+        return task
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            exc = task.exception()
+        except Exception:  # noqa: BLE001 任务已 done,exception() 仅在被取消时抛异常
+            return
+        if exc is not None:
+            logger.error(
+                "后台任务异常(已隔离,不影响主流程)",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+    async def _drain_tasks(self) -> None:
+        """取消并等待全部在途后台任务(在适配器 stop() 中调用)。"""
+        pending = [t for t in self._tasks if not t.done()]
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._tasks.clear()

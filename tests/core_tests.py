@@ -58,6 +58,46 @@ async def test_escape_cq_injection():
     assert "&amp;" in safe, safe
 
 
+async def test_qq_send_cq_escape():
+    """qq_send_image/voice:发送 CQ 码前转义外部内容,防注入(#80 回归)。"""
+    from src.agent.tools.base import ToolContext
+    from src.agent.tools.qq_message import QqSendImageTool, QqSendVoiceTool
+
+    class RecordingAdapter:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        async def send_group_msg(self, gid, message):
+            self.sent.append(message)
+
+        async def send_private_msg(self, uid, message):
+            self.sent.append(message)
+
+    adapter = RecordingAdapter()
+    event = AgentEvent(
+        platform="qq",
+        message_type="group",
+        group_id="100",
+        user_id="42",
+        sender_name="tester",
+        message=MessageChain([MessageSegment.text("x")]),
+        session_id="100:42",
+        is_tome=True,
+    )
+    ctx = ToolContext(event=event, adapter=adapter, auth=AuthManager(), config=Config({}), db=None)
+
+    evil_img = "x.jpg&[CQ:image,file=evil.jpg]"
+    await QqSendImageTool().execute(ctx, evil_img)
+    await QqSendVoiceTool().execute(ctx, "a.mp3[CQ:at,qq=1]")
+    assert len(adapter.sent) == 2
+    img_msg, voice_msg = adapter.sent
+    # 注入的 CQ 码被转义,外层包裹保留
+    assert "[CQ:image,file=evil" not in img_msg, img_msg
+    assert "&#91;CQ:image,file=evil" in img_msg and "&amp;" in img_msg, img_msg
+    assert "[CQ:at,qq=1]" not in voice_msg, voice_msg
+    assert "&#91;CQ:at,qq=1&#93;" in voice_msg, voice_msg
+
+
 async def test_pairing_reuse():
     auth = AuthManager()
     c1 = auth.request_pairing("10001", "200")
@@ -778,10 +818,15 @@ async def test_tool_approval_flow():
     res = auth.resolve_tool_approval("1001", True)
     assert res.get("ok") and auth.is_tool_allowed("1001", "bash"), res
     assert auth.get_pending_tool_approval("1001") is None
-    # TTL 过期后临时授权失效
-    auth._temp_tool_allows[("1001", "bash")] = {"ts": 0, "ttl": 1}
+    # TTL 过期后临时授权失效(session_id=None 的全局放行)
+    auth._temp_tool_allows[("1001", "bash", None)] = {"ts": 0, "ttl": 1}
     auth.is_tool_allowed("1001", "bash")  # 触发清理
     assert not auth.is_tool_allowed("1001", "bash")
+    # 会话级授权:仅对指定 session 放行,不影响其他会话
+    auth._temp_tool_allows[("1001", "bash", "sess-a")] = {"ts": time.time() + 100, "ttl": 100}
+    assert auth.is_tool_allowed("1001", "bash", "sess-a")
+    assert not auth.is_tool_allowed("1001", "bash", "sess-b")
+    assert not auth.is_tool_allowed("1001", "bash")  # 全局(None)不放行
     # 拒绝 -> 清空请求且不授权
     auth.request_tool_approval("1002", "bash", {})
     auth.resolve_tool_approval("1002", False)
@@ -1159,6 +1204,23 @@ async def test_ssrf_edge_cases():
     assert await is_safe_url_async("http://localtest.me/") is False
 
 
+async def test_path_trusted_sibling_bypass():
+    """可信目录边界:兄弟目录(/data/trusted_evil)与前缀相似目录不能绕过(/data/trusted)。"""
+    import tempfile
+
+    d = Path(tempfile.mkdtemp())
+    (d / "trusted").mkdir()
+    (d / "trusted_evil").mkdir()
+    (d / "trustedX").mkdir()
+    auth = AuthManager(trusted_folders=[str(d / "trusted")])
+    assert auth.is_path_trusted(str(d / "trusted" / "a.txt"))
+    assert auth.is_path_trusted(str(d / "trusted" / "sub" / "b.txt")), "子目录应可信"
+    assert not auth.is_path_trusted(str(d / "trusted_evil" / "x.txt")), "兄弟目录不可信"
+    assert not auth.is_path_trusted(str(d / "trustedX" / "y.txt")), "前缀相似目录不可信"
+    # 空可信目录 = 全部路径可信
+    assert AuthManager().is_path_trusted(str(d / "anywhere" / "f.txt"))
+
+
 async def test_approval_stop_clears_pending():
     """审批续接顺序修复:非审批回复(STOP)放弃挂起的审批,不残留到 TTL。"""
     from src.agent.engine import AgentEngine
@@ -1187,6 +1249,105 @@ async def test_approval_stop_clears_pending():
     reply = await engine.process(make_event("停止", user_id="42"))
     assert reply == "已结束当前对话上下文。"
     assert auth.get_pending_tool_approval("42") is None, "STOP 应放弃挂起的审批"
+
+
+async def test_approval_retained_on_unrelated():
+    """审批续接(修复过度修正):无关消息保留挂起审批,不静默取消。"""
+    from src.agent.engine import AgentEngine
+    from src.utils.config import Config
+
+    class FakeMemory:
+        def clear_working(self, sid):
+            pass
+
+        def add_message(self, sid, role, text):
+            pass
+
+        def get_pending_question(self, sid):
+            return None
+
+        def get_profile(self, uid):
+            return None
+
+        def get_auto_memory(self, uid):
+            return []
+
+        def get_reflections(self, uid, limit=3):
+            return []
+
+        def get_episodic(self, sid, limit=8):
+            return []
+
+        def get_working(self, sid):
+            return []
+
+    class FakeSubagent:
+        def bind_executor(self, executor):
+            pass
+
+    class FakeTools:
+        def schemas(self):
+            return []
+
+        def names(self):
+            return []
+
+    auth = AuthManager()
+    auth.request_tool_approval("42", "bash", {"command": "ls"})
+    assert auth.get_pending_tool_approval("42") is not None
+
+    engine = AgentEngine(
+        provider=object(),
+        tools=FakeTools(),
+        memory=FakeMemory(),
+        auth=auth,
+        config=Config({}),
+        adapter=object(),
+        db=object(),
+        subagent_manager=FakeSubagent(),
+        skills=None,
+        sqlite_store=None,
+        file_memory=None,
+    )
+    # 无关消息:审批保持挂起,不被误结算
+    reply = await engine.process(make_event("你好", user_id="42"))
+    assert reply is not None
+    rec = auth.get_pending_tool_approval("42")
+    assert rec is not None and rec["tool"] == "bash", "无关消息不应取消挂起审批"
+    # 之后用户明确批准:审批仍可正常结算并放行
+    await engine.process(make_event("允许", user_id="42"))
+    assert auth.get_pending_tool_approval("42") is None, "明确批准后审批应结算"
+    assert auth.is_tool_allowed("42", "bash")
+
+
+async def test_task_tracker_drain():
+    """TaskTrackerMixin:stop 时取消在途后台任务,异常任务完成后自动回收。"""
+    from src.adapter.driver import TaskTrackerMixin
+
+    class Tracker(TaskTrackerMixin):
+        def __init__(self) -> None:
+            self._tasks: set[asyncio.Task] = set()
+
+    t = Tracker()
+
+    async def long_work():
+        await asyncio.sleep(60)
+
+    task = t._spawn(long_work())
+    assert len(t._tasks) == 1
+    await t._drain_tasks()
+    assert len(t._tasks) == 0
+    assert task.done() and task.cancelled()
+
+    async def boom():
+        raise ValueError("boom")
+
+    task2 = t._spawn(boom())
+    await asyncio.gather(task2, return_exceptions=True)  # 等 task2 完成
+    await asyncio.sleep(0)  # 让 done 回调执行完毕再断言
+    assert task2 not in t._tasks, "异常任务完成应从集合移除"
+    assert task2.done()
+    assert task2.exception() is not None, "异常已被 done 回调回收,不产生 never-retrieved 警告"
 
 
 async def run_all() -> bool:

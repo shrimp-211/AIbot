@@ -9,6 +9,8 @@ from ...security.auth import Decision
 from .base import Tool, ToolContext
 
 _MAX_GREP_PATTERN_LEN = 200
+# 超长行(压缩/minified 内容)跳过匹配,防止灾难性回溯把工作线程钉死
+_MAX_GREP_LINE_LEN = 10_000
 # 拒绝危险回溯:长交替、量词范围、嵌套重复分组 `(a+)+`、环视滥用等
 _DANGEROUS_REGEX = re.compile(
     r"\((?:[^()]*\|){2,}[^()]*\)"
@@ -237,8 +239,11 @@ class GrepTool(Tool):
             try:
                 with open(p, "r", encoding="utf-8", errors="ignore") as f:
                     for i, line in enumerate(f, 1):
-                        if compiled.search(line.rstrip("\n")):
-                            found.append(f"{p}:{i}:{line.rstrip()[:200]}")
+                        line = line.rstrip("\n")
+                        if len(line) > _MAX_GREP_LINE_LEN:
+                            continue  # 超长行跳过匹配(ReDoS 纵深防御)
+                        if compiled.search(line):
+                            found.append(f"{p}:{i}:{line[:200]}")
                             if len(found) >= 50:
                                 break
             except OSError:

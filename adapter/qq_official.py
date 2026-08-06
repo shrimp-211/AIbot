@@ -20,12 +20,12 @@ from aiohttp import web
 from loguru import logger
 
 from .base import BaseAdapter
-from .driver import ReverseDriver, ReverseServerMixin
+from .driver import ReverseDriver, ReverseServerMixin, TaskTrackerMixin
 from .event import AgentEvent
 from .message import MessageChain
 
 
-class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
+class QQOfficialAdapter(TaskTrackerMixin, ReverseServerMixin, BaseAdapter):
     platform = "qq_official"
 
     _token_cache: dict[str, tuple[str, float]] = {}
@@ -50,6 +50,7 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
         self._init_server(host, port, path, driver)
         self._session: aiohttp.ClientSession | None = None
         self._running = False
+        self._tasks: set[asyncio.Task] = set()
         self._msg_seq = 0
 
     def _register_driver_route(self, driver: ReverseDriver, path: str) -> None:
@@ -70,6 +71,7 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
     async def stop(self) -> None:
         self._running = False
         await self._stop_server()
+        await self._drain_tasks()
         if self._session is not None:
             await self._session.close()
             self._session = None
@@ -118,7 +120,7 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
             data = json.loads(body.decode("utf-8"))
         except json.JSONDecodeError:
             return web.Response(status=400, text="Invalid JSON")
-        asyncio.create_task(self._dispatch_frame(data))
+        self._spawn(self._dispatch_frame(data))
         # QQ 官方要求收到后立即返回成功响应
         return web.Response(status=200, text="success")
 
@@ -215,7 +217,7 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
             return cached[0]
         if self._session is None or not (self.app_id and self.app_secret):
             raise RuntimeError("QQ 官方适配器未配置 app_id/app_secret")
-        async with self._session.get(
+        async with self._session.post(
             f"https://bots.qq.com/app/getAppAccessToken",
             json={
                 "appId": self.app_id,
