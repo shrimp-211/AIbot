@@ -123,6 +123,12 @@ class BaseProvider(ABC):
         assert last_exc is not None
         raise last_exc
 
+    def set_model(self, model: str) -> None:
+        """运行时切换模型(热切换, 供 /model 命令),同步更新上下文窗口推断。"""
+        self.model = model or self.model
+        self.config["model"] = self.model
+        self.context_window = estimate_context_window(self.model)
+
     @abstractmethod
     async def chat(
         self,

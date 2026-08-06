@@ -71,7 +71,19 @@ class OpenAICompatibleProvider(BaseProvider):
                 tool_calls.append(
                     {"id": tc.id, "name": tc.function.name, "arguments": arguments}
                 )
-        return {"content": content, "tool_calls": tool_calls, "raw": msg}
+        # token 用量在完整 response 上(choice.message 无 usage),供上层成本统计
+        usage = getattr(resp, "usage", None)
+        return {
+            "content": content,
+            "tool_calls": tool_calls,
+            "raw": msg,
+            "usage": {
+                "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            }
+            if usage is not None
+            else {},
+        }
 
     async def test(self) -> bool:
         try:

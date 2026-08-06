@@ -105,6 +105,7 @@ class AgentEngine:
         file_memory: Any = None,
         mcp_manager: Any = None,
         audit_logger: Any = None,
+        usage_tracker: Any = None,
     ):
         self.provider = provider
         self.tools = tools
@@ -125,6 +126,13 @@ class AgentEngine:
         self._static_prompt: str | None = None
         self.messages_processed = 0  # 累计处理消息数(WebUI 统计)
 
+        # LLM 用量统计:默认按 db 建 tracker(测试/嵌入场景未传也不阻塞)
+        if usage_tracker is None:
+            from .usage import UsageTracker
+
+            usage_tracker = UsageTracker(db)
+        self.usage = usage_tracker
+
         if self.subagent_manager is None:
             from .subagent import SubagentManager
 
@@ -133,6 +141,39 @@ class AgentEngine:
     def set_adapter(self, adapter: Any) -> None:
         """注入默认发送适配器(构造时可能尚不存在,由 main.py 启动期回填)。"""
         self.adapter = adapter
+
+    # ---------- 运行时控制(命令体系) ----------
+
+    @property
+    def model_name(self) -> str:
+        """当前生效模型名(ProviderManager 经 __getattr__ 代理到 active provider)。"""
+        try:
+            return self.provider.model
+        except AttributeError:
+            return self.config.get("llm.provider.model", "?")
+
+    def set_model(self, model: str) -> dict:
+        """运行时切换 LLM 模型(热切换, 参照 AstrBot 模型切换命令)。"""
+        model = (model or "").strip()
+        if not model:
+            return {"error": "模型名不能为空"}
+        old = self.model_name
+        try:
+            self.provider.set_model(model)
+        except AttributeError:  # 极老的 provider 无 set_model,直接改属性
+            self.provider.model = model
+        self.config.set("llm.provider.model", model)
+        logger.info("模型已切换: {} -> {}", old, model)
+        return {"ok": True, "model": model}
+
+    def clear_session(self, session_id: str) -> dict:
+        """清空会话上下文:工作记忆 + 挂起问题 + 检查点(参照 AstrBot 清空对话)。"""
+        self.memory.clear_working(session_id)
+        if hasattr(self.memory, "clear_pending_question"):
+            self.memory.clear_pending_question(session_id)
+        if hasattr(self.memory, "clear_checkpoint"):
+            self.memory.clear_checkpoint(session_id)
+        return {"ok": True, "session_id": session_id}
 
     # ---------- 入口 ----------
 
@@ -322,10 +363,16 @@ class AgentEngine:
 
     def stats(self) -> dict[str, Any]:
         """引擎运行统计,供 WebUI 状态页展示。"""
+        try:
+            usage = self.usage.summary()
+        except Exception:  # noqa: BLE001
+            usage = {}
         return {
             "messages_processed": self.messages_processed,
             "tools": len(self.tools.names()),
             "provider": type(self.provider).__name__,
+            "model": self.model_name,
+            "usage": usage,
         }
 
     # ---------- Prompt 构建 ----------
@@ -472,6 +519,18 @@ class AgentEngine:
 
     # ---------- ReAct 循环 ----------
 
+    async def _send_progress(self, ctx: ToolContext, text: str) -> None:
+        """私聊/WebUI 会话发送处理进度指示(参照 AstrBot 思考中指示器)。
+
+        群聊不发送,避免刷屏;WebUI 与 QQ 私聊均为 private 事件。
+        """
+        if ctx.event.message_type != "private":
+            return
+        try:
+            await ctx.event.reply(text)
+        except Exception:  # noqa: BLE001
+            logger.exception("发送进度指示失败")
+
     async def _run_react_loop(self, ctx: ToolContext, messages: list[dict], system_prompt: str) -> str:
         schemas = self._filtered_schemas(ctx.event.session_id)
         max_iterations = int(self.config.get("agent.max_iterations", 8) or 8)
@@ -483,7 +542,12 @@ class AgentEngine:
         last_tool_name: str | None = None
         last_tool_args: dict | None = None
         same_tool_streak = 0
+        thinking_sent = False
         for _ in range(max_iterations):
+            if not thinking_sent:
+                # 进入处理即提示"思考中"(仅私聊/WebUI,只发一次避免刷屏)
+                await self._send_progress(ctx, "⏳ 思考中...")
+                thinking_sent = True
             if should_compress(messages, max_context):
                 if self.hooks:
                     await self.hooks.trigger("pre_compaction", messages=len(messages))
@@ -498,6 +562,12 @@ class AgentEngine:
                 if self.hooks:
                     await self.hooks.trigger("post_compaction", messages=len(messages))
             result = await self.provider.chat(messages, system_prompt=system_prompt, tools=schemas)
+            # 记录 token 用量与估算成本(usage 缺失如 mock 时自动跳过)
+            self.usage.record(
+                result.get("usage"),
+                user_id=ctx.event.user_id,
+                model=self.model_name,
+            )
             content = (result.get("content") or "").strip()
             tool_calls = result.get("tool_calls") or []
 
@@ -523,10 +593,13 @@ class AgentEngine:
             )
 
             async def _run_one(tc: dict) -> str:
+                name = tc.get("name", "")
+                # 工具执行前提示进度(仅私聊/WebUI)
+                await self._send_progress(ctx, f"🔧 正在执行 `{name}`...")
                 output = await self._execute_tool(ctx, tc)
                 if self.hooks:
                     await self.hooks.trigger(
-                        "post_tool_use", tool_name=tc.get("name", ""), output=output
+                        "post_tool_use", tool_name=name, output=output
                     )
                 return output
 

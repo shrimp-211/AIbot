@@ -224,10 +224,11 @@ class WebUIServer:
                 "ok": True,
                 "uptime": int(time.time() - self._start_time),
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "model": self._config.get("llm.provider.model", ""),
-                "provider": self._config.get("llm.provider.type", ""),
+                "model": stats.get("model") or self._config.get("llm.provider.model", ""),
+                "provider": stats.get("provider") or self._config.get("llm.provider.type", ""),
                 "tools_count": len(tools.names()) if tools else 0,
                 "messages_processed": stats.get("messages_processed", 0),
+                "usage": stats.get("usage", {}),  # LLM 用量/成本统计(UsageTracker.summary)
                 "connected": bool(self._deps.get("adapter_connected")),
             }
         )

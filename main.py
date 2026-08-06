@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -25,6 +26,7 @@ from .agent.memory.store import MemoryStore
 from .agent.persona import PersonaManager
 from .agent.proactive import CronManager
 from .agent.skills import SkillRegistry
+from .agent.usage import UsageTracker
 from .agent.tools import build_default_registry
 from .agent.tools.mcp_tools import MCPTool
 from .pipeline.scheduler import PipelineScheduler
@@ -110,8 +112,16 @@ def load_adapters(
     return loaded
 
 
-def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: AuthManager) -> None:
-    """注册内置演示插件(可被 data/plugins 的外部插件补充)。"""
+def register_builtin_plugins(
+    registry: PluginRegistry,
+    config: Config,
+    auth: AuthManager,
+    engine: AgentEngine,
+) -> None:
+    """注册内置插件:演示命令 + 会话控制命令体系(clear/cost/model/persona/skills/plan/session)。
+
+    engine 提供模型切换/用量统计/会话清理等运行时能力(参照 AstrBot 命令体系)。
+    """
 
     @registry.command("ping")
     async def ping(event: AgentEvent):
@@ -171,6 +181,140 @@ def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: Aut
         for d in _plugin_dirs():
             loaded.extend(await registry.load_from_directory(d))
         await event.reply(f"插件重载完成: {loaded or '无外部插件'}")
+        return None
+
+    # ---------- 会话控制命令体系(参照 AstrBot) ----------
+
+    @registry.command("clear", permission_level=1)
+    async def clear(event: AgentEvent):
+        engine.clear_session(event.session_id)
+        await event.reply("✅ 已清空当前会话上下文。")
+        return None
+
+    @registry.command("cost", permission_level=1)
+    async def cost(event: AgentEvent):
+        # 私聊看自己,群聊看全局(避免暴露他人用量)
+        user_id = event.user_id if event.message_type == "private" else ""
+        s = engine.usage.summary(user_id=user_id)
+        scope = "你的" if user_id else "全局"
+        lines = [
+            f"📊 LLM 用量统计({scope})",
+            f"调用次数: {s['calls']}",
+            f"输入 token: {s['prompt_tokens']:,}",
+            f"输出 token: {s['completion_tokens']:,}",
+            f"总 token: {s['total_tokens']:,}",
+            f"估算成本: ${s['estimated_cost']:.4f}",
+        ]
+        await event.reply("\n".join(lines))
+        return None
+
+    @registry.command("model", permission_level=7)
+    async def model(event: AgentEvent):
+        arg = (event.state.get("command_arg") or "").strip()
+        if not arg:
+            await event.reply(f"当前模型: {escape_cq(engine.model_name)}")
+            return None
+        r = engine.set_model(arg)
+        if r.get("error"):
+            await event.reply(f"❌ {escape_cq(r['error'])}")
+        else:
+            await event.reply(f"✅ 已切换到模型: {escape_cq(r['model'])}")
+        return None
+
+    @registry.command("persona", permission_level=1)
+    async def persona(event: AgentEvent):
+        arg = (event.state.get("command_arg") or "").strip()
+        if not arg:
+            personas = engine.persona_manager.list()
+            if not personas:
+                await event.reply("暂无自定义人格,可用 /persona <id> 切换。")
+                return None
+            lines = ["📋 可用人格:"]
+            for p in personas:
+                lines.append(
+                    f"· `{escape_cq(p['id'])}` — {escape_cq(p['name'])}: "
+                    f"{escape_cq(p.get('description') or '无描述')}"
+                )
+            await event.reply("\n".join(lines))
+            return None
+        if arg in ("reset", "默认", "default"):
+            r = engine.persona_manager.switch(event.session_id, None)
+        else:
+            r = engine.persona_manager.switch(event.session_id, arg)
+        if r.get("error"):
+            await event.reply(f"❌ {escape_cq(r['error'])}")
+        else:
+            await event.reply(f"✅ {escape_cq(r.get('message', '已切换人格'))}")
+        return None
+
+    @registry.command("skills", permission_level=1)
+    async def skills(event: AgentEvent):
+        arg = (event.state.get("command_arg") or "").strip()
+        if not arg:
+            all_skills = engine.skills.all()
+            lines = ["🎯 可用技能:"] if all_skills else ["🎯 暂无技能。"]
+            for s in all_skills:
+                lines.append(f"· `{escape_cq(s.name)}` — {escape_cq(s.description or '无描述')}")
+            active = engine.skills.active(event.session_id)
+            lines.append(f"\n当前激活: {escape_cq(active.name) if active else '无'}")
+            await event.reply("\n".join(lines))
+            return None
+        if arg in ("stop", "reset", "deactivate"):
+            r = engine.skills.deactivate(event.session_id)
+            await event.reply(f"✅ 已停止技能: {escape_cq(r.get('skill') or r.get('message') or '')}")
+            return None
+        r = engine.skills.activate(event.session_id, arg)
+        if r.get("error"):
+            await event.reply(f"❌ {escape_cq(r['error'])}")
+        else:
+            await event.reply(f"✅ 已激活技能 `{escape_cq(r.get('skill', ''))}` — {escape_cq(r.get('description') or '')}")
+        return None
+
+    @registry.command("plan", permission_level=1)
+    async def plan(event: AgentEvent):
+        plans = engine.db.get("plans", {}) or {}
+        mine = [p for p in plans.values() if p.get("session") == event.session_id]
+        if not mine:
+            await event.reply("该会话暂无计划,可让 Agent 先用 plan 工具创建。")
+            return None
+        lines = ["📋 当前会话计划:"]
+        for p in mine[-3:]:
+            steps = p.get("steps", [])
+            statuses = p.get("statuses", [])
+            done = sum(1 for st in statuses if st == "completed")
+            lines.append(f"· `{escape_cq(p['plan_id'])}` {escape_cq(p.get('goal', ''))} ({done}/{len(steps)})")
+            for i, (step, st) in enumerate(zip(steps, statuses)):
+                mark = {"completed": "✅", "in_progress": "🔄", "pending": "⬜"}.get(st, "⬜")
+                lines.append(f"  {mark} {i + 1}. {escape_cq(step)}")
+        await event.reply("\n".join(lines))
+        return None
+
+    @registry.command("session", permission_level=1)
+    async def session(event: AgentEvent):
+        parts = ((event.state.get("command_arg") or "").strip().split() or ["list"])
+        action = parts[0].lower()
+        if action == "save":
+            r = engine.memory.save_checkpoint(event.session_id)
+            await event.reply(f"✅ 已保存检查点: {r.get('messages', 0)} 条消息。")
+        elif action == "load":
+            r = engine.memory.load_checkpoint(event.session_id)
+            if r is None:
+                await event.reply("该会话没有已保存的检查点,可用 /session save 保存。")
+            else:
+                await event.reply(f"✅ 已恢复检查点({r.get('messages', 0)} 条消息)。")
+        elif action in ("clear", "delete"):
+            r = engine.memory.clear_checkpoint(event.session_id)
+            await event.reply("✅ 已清除该会话检查点。" if r.get("deleted") else "该会话没有检查点。")
+        else:  # list
+            cps = engine.memory.list_checkpoints()
+            if not cps:
+                await event.reply("暂无已保存的检查点。")
+                return None
+            lines = ["💾 已保存的会话检查点:"]
+            for cp in cps:
+                ts = time.strftime("%m-%d %H:%M", time.localtime(cp.get("saved_at", 0)))
+                lines.append(f"· `{escape_cq(cp['session_id'])}` — {ts} ({cp.get('messages', 0)} 条)")
+            await event.reply("\n".join(lines))
         return None
 
 
@@ -257,6 +401,9 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         enabled=bool(config.get("security.audit_enabled", True)),
     )
 
+    # LLM 用量与成本统计(价格表可由 cost.prices 覆盖)
+    usage = UsageTracker(db, prices=config.get("cost.prices", {}))
+
     # 工具
     tools = build_default_registry(auth)
 
@@ -303,6 +450,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         file_memory=file_memory,
         mcp_manager=mcp_manager,
         audit_logger=audit_logger,
+        usage_tracker=usage,
     )
 
     # 插件注册中心
@@ -311,7 +459,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     plugin_registry.register_dependency(AuthManager, auth)
     plugin_registry.register_dependency(MemoryStore, memory)
     plugin_registry.register_dependency(JsonKV, db)  # 插件持久化数据
-    register_builtin_plugins(plugin_registry, config, auth)
+    register_builtin_plugins(plugin_registry, config, auth, engine)
 
     # 外部插件(热加载 */data/plugins/*.py,支持 setup(registry) 入口)
     for plugin_dir in _plugin_dirs():

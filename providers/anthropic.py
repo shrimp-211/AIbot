@@ -137,11 +137,19 @@ class AnthropicProvider(BaseProvider):
                         "arguments": block.input or {},
                     }
                 )
+        # token 用量(Anthropic: input/output tokens),供上层成本统计
+        usage = getattr(resp, "usage", None)
         return {
             "content": "".join(content_parts),
             "tool_calls": tool_calls,
             "raw": resp,
             "thinking": "\n".join(thinking_text),
+            "usage": {
+                "prompt_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                "completion_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+            }
+            if usage is not None
+            else {},
         }
 
     async def test(self) -> bool:
