@@ -54,6 +54,17 @@ search:
   tavily_key: ${TAVILY_API_KEY:-}
   brave_key: ${BRAVE_API_KEY:-}
 
+# ---------- MCP(Model Context Protocol)外部工具 ----------
+# 每个服务器: name/command/args/env/permission_level
+# 示例: 接入 GitHub 官方 MCP 服务器
+# mcp:
+#   servers:
+#     - name: github
+#       command: npx
+#       args: ["-y", "@modelcontextprotocol/server-github"]
+mcp:
+  servers: []
+
 # ---------- Agent ----------
 agent:
   workdir: "."             # 文件工具的操作根目录

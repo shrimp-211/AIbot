@@ -6,6 +6,7 @@ from .base import ToolRegistry
 from .file_tools import FileReadTool, FileWriteTool, GlobTool, GrepTool
 from .knowledge import KnowledgeAddTool, KnowledgeSearchTool
 from .memory_tools import MemoryAddTool, MemoryListTool, MemorySearchTool
+from .mcp_tools import MCPServerListTool
 from .network import WebFetchTool, WebSearchTool
 from .plan_tools import PlanTool
 from .session_tools import SessionListTool, SessionLoadTool, SessionSaveTool
@@ -66,6 +67,7 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         SessionSaveTool(),
         SessionLoadTool(),
         SessionListTool(),
+        MCPServerListTool(),
     ):
         registry.register(tool)
     return registry

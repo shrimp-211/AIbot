@@ -23,6 +23,7 @@ from .adapter import (
 )
 from .agent.engine import AgentEngine
 from .agent.hooks import HookManager
+from .agent.mcp import MCPManager
 from .agent.memory.files import FileMemoryStore
 from .agent.memory.sqlite_store import SQLiteStore
 from .agent.memory.store import MemoryStore
@@ -30,6 +31,7 @@ from .agent.persona import PersonaManager
 from .agent.proactive import CronManager
 from .agent.skills import SkillRegistry
 from .agent.tools import build_default_registry
+from .agent.tools.mcp_tools import MCPTool
 from .pipeline.scheduler import PipelineScheduler
 from .pipeline.stages import (
     ContentSafetyStage,
@@ -114,6 +116,16 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     # 工具
     tools = build_default_registry(auth)
 
+    # MCP 外部工具(按配置启动服务器并动态注册)
+    mcp_manager = MCPManager()
+    mcp_servers = config.get("mcp.servers", []) or []
+    if mcp_servers:
+        await mcp_manager.start_servers(mcp_servers)
+        for server in mcp_manager.list_servers():
+            for schema in server.tools:
+                tools.register(MCPTool(server.name, schema, permission_level=server.permission_level))
+        logger.info(f"MCP 已接入 {len(mcp_manager.list_servers())} 个服务器")
+
     # Provider
     provider_cfg = config.get("llm.provider", {})
     provider = create_provider(provider_cfg)
@@ -145,6 +157,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         skills=skills,
         sqlite_store=sqlite_store,
         file_memory=file_memory,
+        mcp_manager=mcp_manager,
     )
 
     # 插件注册中心
@@ -245,6 +258,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     await adapter_registry.stop_all()
     await cron.stop()
     await sqlite_store.close()
+    await mcp_manager.stop_all()
     if webui is not None:
         await webui.stop()
     await db.stop()
