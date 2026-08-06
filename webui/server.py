@@ -148,12 +148,22 @@ class WebUIServer:
         self._app.router.add_get("/api/status", self._status)
         self._app.router.add_get("/api/tools", self._tools)
         self._app.router.add_get("/api/tasks", self._tasks)
+        self._app.router.add_post("/api/tasks", self._tasks_add)
+        self._app.router.add_delete("/api/tasks", self._tasks_delete)
+        self._app.router.add_get("/api/tasks/history", self._tasks_history)
+        self._app.router.add_get("/api/knowledge", self._knowledge)
+        self._app.router.add_post("/api/knowledge", self._knowledge_add)
+        self._app.router.add_delete("/api/knowledge", self._knowledge_delete)
+        self._app.router.add_post("/api/knowledge/search", self._knowledge_search)
+        self._app.router.add_get("/api/providers", self._providers)
+        self._app.router.add_post("/api/providers/test", self._providers_test)
         self._app.router.add_get("/api/mcp", self._mcp_status)
         self._app.router.add_get("/api/skills", self._skills)
         self._app.router.add_get("/api/audit", self._audit)
         self._app.router.add_get("/api/subagents", self._subagents)
         self._app.router.add_post("/api/broadcast", self._broadcast)
         self._app.router.add_get("/api/plugins", self._plugins_list)
+        self._app.router.add_post("/api/plugins/reload", self._plugins_reload)
         self._app.router.add_get("/api/config", self._config_view)
         self._app.router.add_post("/api/config", self._config_save)
         self._app.router.add_get("/api/adapters", self._adapters_list)
@@ -435,6 +445,238 @@ class WebUIServer:
                 "connected": bool(getattr(adapter, "_active_ws", None) or getattr(adapter, "_connections", None)),
             })
         return web.json_response({"ok": True, "adapters": adapters})
+
+    # ---------- 知识库管理 ----------
+
+    def _knowledge_manager(self):
+        engine = self._deps.get("engine")
+        return getattr(engine, "knowledge", None) if engine else None
+
+    async def _knowledge(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        km = self._knowledge_manager()
+        if km is None:
+            return web.json_response({"ok": True, "stats": None, "docs": [], "total": 0})
+        try:
+            limit = min(int(request.query.get("limit", 20) or 20), 200)
+            offset = max(int(request.query.get("offset", 0) or 0), 0)
+            docs = sorted(km._docs or [], key=lambda d: d.get("created_at", 0), reverse=True)
+            page = [
+                {
+                    "doc_id": d["id"],
+                    "title": d.get("title", ""),
+                    "category": d.get("category", ""),
+                    "chunks": len(d.get("chunk_ids", [])),
+                    "created_at": d.get("created_at", 0),
+                }
+                for d in docs[offset : offset + limit]
+            ]
+            return web.json_response({"ok": True, "stats": km.stats(), "docs": page, "total": len(docs)})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("知识库列表失败")
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def _knowledge_add(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        km = self._knowledge_manager()
+        if km is None:
+            return web.json_response({"ok": False, "error": "知识库未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        content = str(data.get("content", "") or "")
+        url = str(data.get("url", "") or "")
+        file = str(data.get("file", "") or "")
+        source = ""
+        try:
+            if url and not content:
+                from ..agent.knowledge.readers import ContentReader
+
+                content = await ContentReader().read_url(url)
+                source = f"url:{url}"
+            elif file and not content:
+                from ..agent.knowledge.readers import ContentReader
+
+                content = await ContentReader().read_file(file)
+                source = f"file:{file}"
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": f"内容导入失败: {exc}"}, status=400)
+        if not content.strip():
+            return web.json_response({"ok": False, "error": "内容为空"}, status=400)
+        try:
+            result = await km.add_document(
+                title=str(data.get("title", "") or content[:30]),
+                content=content,
+                category=str(data.get("category", "通用") or "通用"),
+                source=source,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("知识库添加入库失败")
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+        return web.json_response({"ok": True, "result": result})
+
+    async def _knowledge_delete(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        km = self._knowledge_manager()
+        if km is None:
+            return web.json_response({"ok": False, "error": "知识库未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        result = await km.delete_document(str(data.get("doc_id", "") or ""))
+        return web.json_response({"ok": result.get("ok", False), "result": result})
+
+    async def _knowledge_search(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        km = self._knowledge_manager()
+        if km is None:
+            return web.json_response({"ok": False, "error": "知识库未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        query = str(data.get("query", "") or "")
+        if not query:
+            return web.json_response({"ok": False, "error": "检索词为空"}, status=400)
+        result = await km.search(
+            query, str(data.get("category", "") or "") or None, int(data.get("limit", 3) or 3)
+        )
+        return web.json_response({"ok": True, "result": result})
+
+    # ---------- 提供商状态与测试 ----------
+
+    def _provider_collection(self) -> list[dict]:
+        """汇总 LLM/STT/TTS/Embedding/Rerank 各 Provider 状态。"""
+        engine = self._deps.get("engine")
+        if engine is None:
+            return []
+        out: list[dict] = []
+        provider = getattr(engine, "provider", None)
+        if provider is not None:
+            out.append({
+                "key": "llm", "name": "LLM 对话", "type": type(provider).__name__,
+                "model": getattr(provider, "model", ""), "test": provider.test,
+            })
+        perc = getattr(engine, "perception", None)
+        stt = getattr(getattr(perc, "audio", None), "stt_provider", None)
+        if stt is not None:
+            out.append({
+                "key": "stt", "name": "语音识别 STT", "type": type(stt).__name__,
+                "model": getattr(stt, "model", ""), "test": stt.test,
+            })
+        gen = getattr(engine, "generation", None)
+        tts = getattr(getattr(gen, "audio", None), "tts_provider", None)
+        if tts is not None:
+            out.append({
+                "key": "tts", "name": "语音合成 TTS", "type": type(tts).__name__,
+                "model": getattr(tts, "model", ""), "test": tts.test,
+            })
+        km = self._knowledge_manager()
+        if km is not None:
+            emb = km.embedding
+            if emb is not None:
+                out.append({
+                    "key": "embedding", "name": "向量化 Embedding", "type": type(emb).__name__,
+                    "model": getattr(emb, "model", ""), "test": emb.test,
+                })
+            rk = km.reranker.provider if getattr(km, "reranker", None) else None
+            if rk is not None:
+                out.append({
+                    "key": "rerank", "name": "重排序 Rerank", "type": type(rk).__name__,
+                    "model": getattr(rk, "model", ""), "test": rk.test,
+                })
+        return out
+
+    async def _providers(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        items = []
+        for p in self._provider_collection():
+            items.append({"key": p["key"], "name": p["name"], "type": p["type"], "model": p["model"]})
+        return web.json_response({"ok": True, "providers": items})
+
+    async def _providers_test(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        results = []
+        for p in self._provider_collection():
+            try:
+                ok = bool(await p["test"]())
+                results.append({"key": p["key"], "name": p["name"], "ok": ok})
+            except Exception as exc:  # noqa: BLE001
+                results.append({"key": p["key"], "name": p["name"], "ok": False, "error": str(exc)})
+        return web.json_response({"ok": True, "results": results})
+
+    # ---------- 定时任务 CRUD ----------
+
+    async def _tasks_add(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        cron = self._deps.get("cron")
+        if cron is None:
+            return web.json_response({"ok": False, "error": "定时模块未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        when = str(data.get("when", "") or "")
+        text = str(data.get("text", "") or "")
+        if not when or not text:
+            return web.json_response({"ok": False, "error": "需要 when(触发时间) 和 text(内容)"}, status=400)
+        result = await cron.add_task(
+            session_id="webui",
+            when=when,
+            text=text,
+            target_group=str(data.get("target_group", "") or "") or None,
+            target_user=str(data.get("target_user", "") or "") or None,
+        )
+        return web.json_response({"ok": "ok" in result, "result": result})
+
+    async def _tasks_delete(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        cron = self._deps.get("cron")
+        if cron is None:
+            return web.json_response({"ok": False, "error": "定时模块未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        result = cron.delete_task("webui", str(data.get("task_id", "") or ""))
+        return web.json_response({"ok": result.get("ok", False), "result": result})
+
+    async def _tasks_history(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        cron = self._deps.get("cron")
+        history = cron.get_history(50) if cron else []
+        return web.json_response({"ok": True, "history": history})
+
+    # ---------- 插件重载 ----------
+
+    async def _plugins_reload(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        registry = self._deps.get("plugin_registry")
+        if registry is None:
+            return web.json_response({"ok": False, "error": "插件模块未启用"}, status=500)
+        try:
+            from ..main import _plugin_dirs
+
+            for plugin_dir in _plugin_dirs():
+                await registry.reload_from_directory(plugin_dir)
+            return web.json_response(
+                {"ok": True, "plugins": len(registry.plugin_metadata()), "handlers": registry.handler_count()}
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("插件重载失败")
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
     # ---------- 聊天 ----------
 

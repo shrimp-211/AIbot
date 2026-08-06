@@ -66,12 +66,34 @@
     <button data-page="plugins" onclick="showPage('plugins')">插件</button>
     <button data-page="config" onclick="showPage('config')">配置</button>
     <button data-page="adapters" onclick="showPage('adapters')">适配器</button>
+    <button data-page="providers" onclick="showPage('providers')">提供商</button>
+    <button data-page="knowledge" onclick="showPage('knowledge')">知识库</button>
     <button data-page="chat" onclick="showPage('chat')">聊天测试</button>
   </div>
 
   <div id="page-status"><div class="stats" id="statsBox"></div></div>
   <div id="page-tools" class="hidden"><div class="card"><div id="toolList"></div></div></div>
-  <div id="page-tasks" class="hidden"><div class="card"><div id="taskList"></div></div></div>
+  <div id="page-tasks" class="hidden">
+    <div class="card">
+      <h3>新建定时任务</h3>
+      <div class="row">
+        <input id="taskWhen" placeholder="触发时间,如: 每天09:00 / 每30分钟 / 明天20:00">
+        <input id="taskText" placeholder="任务内容(发送给群的文本)" onkeydown="if(event.key==='Enter')addTask()">
+      </div>
+      <div class="row">
+        <input id="taskGroup" placeholder="目标群号(留空=按任务原配置)">
+        <button onclick="addTask()">添加</button>
+        <span class="msg-green" id="taskMsg"></span>
+      </div>
+      <div class="error hidden" id="taskErr"></div>
+    </div>
+    <div class="card">
+      <h3>已配置任务</h3><div id="taskList"></div>
+    </div>
+    <div class="card">
+      <h3>执行历史</h3><div id="taskHistory"></div>
+    </div>
+  </div>
   <div id="page-mcp" class="hidden"><div class="card"><div id="mcpList"></div></div></div>
   <div id="page-skills" class="hidden"><div class="card"><div id="skillList"></div></div></div>
   <div id="page-audit" class="hidden"><div class="card"><div id="auditList"></div></div></div>
@@ -79,7 +101,9 @@
 
   <div id="page-plugins" class="hidden">
     <div class="card">
-      <div class="row"><h3 style="margin:0">已加载插件</h3><span id="handlerCount" style="color:var(--muted)"></span></div>
+      <div class="row"><h3 style="margin:0">已加载插件</h3><span id="handlerCount" style="color:var(--muted)"></span>
+        <button class="secondary" onclick="reloadPlugins()">重新加载</button><span class="msg-green" id="pluginMsg"></span>
+      </div>
       <div id="pluginList"></div>
     </div>
   </div>
@@ -97,6 +121,47 @@
 
   <div id="page-adapters" class="hidden">
     <div class="card"><h3>适配器状态</h3><div id="adapterList"></div></div>
+  </div>
+
+  <div id="page-providers" class="hidden">
+    <div class="card">
+      <div class="row"><h3 style="margin:0">Provider 状态</h3>
+        <button onclick="testProviders()">连通性测试</button><span class="msg-green" id="providerMsg"></span>
+      </div>
+      <div id="providerList"></div>
+    </div>
+  </div>
+
+  <div id="page-knowledge" class="hidden">
+    <div class="card">
+      <h3>知识库状态</h3><div id="kbStats"></div>
+    </div>
+    <div class="card">
+      <h3>添加知识</h3>
+      <input id="kbTitle" placeholder="标题">
+      <div class="row" style="margin-top:10px">
+        <input id="kbUrl" placeholder="网页 URL(与内容二选一)">
+        <input id="kbFile" placeholder="本地文件路径(与内容二选一)">
+      </div>
+      <textarea id="kbContent" style="height:120px;margin-top:10px" placeholder="知识内容"></textarea>
+      <div class="row" style="margin-top:10px">
+        <input id="kbCategory" placeholder="分类(默认通用)" value="通用">
+        <button onclick="addKnowledge()">添加入库</button><span class="msg-green" id="kbMsg"></span>
+      </div>
+      <div class="error hidden" id="kbErr"></div>
+    </div>
+    <div class="card">
+      <h3>检索测试</h3>
+      <div class="row">
+        <input id="kbQuery" placeholder="输入问题测试混合检索" onkeydown="if(event.key==='Enter')searchKnowledge()">
+        <button onclick="searchKnowledge()">检索</button>
+      </div>
+      <div id="kbSearchResult"></div>
+    </div>
+    <div class="card">
+      <h3>文档列表 <button class="secondary" onclick="loadKnowledge()">刷新</button></h3>
+      <div id="kbDocs"></div>
+    </div>
   </div>
 
   <div id="page-chat" class="hidden">
@@ -147,10 +212,10 @@ async function doLogin() {
 
 function showPage(name) {
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.page === name));
-  const pages = ['status', 'tools', 'tasks', 'mcp', 'skills', 'audit', 'subagents', 'plugins', 'config', 'adapters', 'chat'];
+  const pages = ['status', 'tools', 'tasks', 'mcp', 'skills', 'audit', 'subagents', 'plugins', 'config', 'adapters', 'providers', 'knowledge', 'chat'];
   pages.forEach(p => $('page-' + p).classList.toggle('hidden', p !== name));
   if (name === 'tools') loadTools();
-  if (name === 'tasks') loadTasks();
+  if (name === 'tasks') { loadTasks(); loadTaskHistory(); }
   if (name === 'mcp') loadMCP();
   if (name === 'skills') loadSkills();
   if (name === 'audit') loadAudit();
@@ -158,6 +223,8 @@ function showPage(name) {
   if (name === 'plugins') loadPlugins();
   if (name === 'config') loadConfig();
   if (name === 'adapters') loadAdapters();
+  if (name === 'providers') loadProviders();
+  if (name === 'knowledge') loadKnowledge();
   if (name === 'chat') connectChat();
 }
 
@@ -186,8 +253,30 @@ async function loadTasks() {
   if (res.status === 401) return logout();
   const tasks = res.data.tasks || [];
   $('taskList').innerHTML = tasks.length
-    ? tasks.map(t => `<div class="tool"><code>${t.desc}</code><small>${t.text} — 下次: ${t.next_at}</small></div>`).join('')
+    ? tasks.map(t => `<div class="tool"><code>${t.desc}</code><small>${t.text} — 下次: ${t.next_at}</small>
+      <button class="secondary" style="padding:2px 10px;margin-top:4px" onclick="deleteTask('${t.task_id}')">删除</button></div>`).join('')
     : '<small>暂无定时任务</small>';
+}
+async function addTask() {
+  $('taskMsg').textContent = ''; $('taskErr').classList.add('hidden');
+  const when = $('taskWhen').value.trim(), text = $('taskText').value.trim();
+  const group_id = $('taskGroup').value.trim();
+  if (!when || !text) { $('taskErr').textContent = '请填写触发时间和内容'; $('taskErr').classList.remove('hidden'); return; }
+  const res = await api('/api/tasks', 'POST', { when, text, target_group: group_id });
+  if (res.data.ok) { $('taskMsg').textContent = '已添加: ' + (res.data.result.desc || ''); $('taskWhen').value=''; $('taskText').value=''; loadTasks(); }
+  else { $('taskErr').textContent = res.data.result?.error || res.data.error || '添加失败'; $('taskErr').classList.remove('hidden'); }
+}
+async function deleteTask(task_id) {
+  const res = await api('/api/tasks', 'DELETE', { task_id });
+  loadTasks();
+}
+async function loadTaskHistory() {
+  const res = await api('/api/tasks/history');
+  if (res.status === 401) return logout();
+  const history = res.data.history || [];
+  $('taskHistory').innerHTML = history.length
+    ? history.map(h => `<div class="tool"><code>${h.time || ''} ${h.ok ? '✅' : '❌'}</code><small>${h.desc || h.text || ''}</small></div>`).join('')
+    : '<small>暂无执行历史</small>';
 }
 
 async function loadMCP() {
@@ -253,6 +342,78 @@ async function loadPlugins() {
         <small style="color:var(--muted)">命令: ${(p.commands||[]).join(', ') || '无'} | 依赖: ${(p.dependencies||[]).join(',') || '无'}</small>
       </div>`).join('')
     : '<small>暂无外部插件</small>';
+}
+
+async function reloadPlugins() {
+  $('pluginMsg').textContent = '';
+  const res = await api('/api/plugins/reload', 'POST', {});
+  if (res.data.ok) { $('pluginMsg').textContent = `已重载 ${res.data.plugins} 个插件(${res.data.handlers} handlers)`; loadPlugins(); }
+  else { $('pluginMsg').textContent = '重载失败: ' + (res.data.error || ''); }
+}
+
+async function loadProviders() {
+  const res = await api('/api/providers');
+  if (res.status === 401) return logout();
+  const providers = res.data.providers || [];
+  $('providerList').innerHTML = providers.length
+    ? providers.map(p => `<div class="tool"><code>${p.name} — ${p.type}</code><small>模型: ${p.model || '默认'}</small></div>`).join('')
+    : '<small>暂无启用的 Provider(见 config.yaml 的 llm/provider_stt/provider_tts/provider_embedding/provider_rerank)</small>';
+}
+async function testProviders() {
+  $('providerMsg').textContent = '测试中...';
+  const res = await api('/api/providers/test', 'POST', {});
+  if (res.status === 401) return logout();
+  const results = res.data.results || [];
+  $('providerList').innerHTML = results.length
+    ? results.map(r => `<div class="tool"><code>${r.name} ${r.ok ? '✅ 正常' : '❌ 失败'}</code><small>${r.error || ''}</small></div>`).join('')
+    : '<small>无可用 Provider</small>';
+  $('providerMsg').textContent = '';
+}
+
+async function loadKnowledge() {
+  const res = await api('/api/knowledge');
+  if (res.status === 401) return logout();
+  const d = res.data;
+  const st = d.stats;
+  $('kbStats').innerHTML = st
+    ? `<div class="stats">
+        <div class="stat"><b>${st.docs}</b><span>文档数</span></div>
+        <div class="stat"><b>${st.chunks}</b><span>分块数</span></div>
+        <div class="stat"><b>${st.vector_index ? '✅' : '⚠️'}</b><span>向量索引</span></div>
+        <div class="stat"><b>${st.embedding ? '✅' : '⚠️'}</b><span>Embedding</span></div>
+        <div class="stat"><b>${st.reranker ? '✅' : '⚠️'}</b><span>Rerank</span></div>
+        <div class="stat"><b>${st.index_vectors}</b><span>索引向量数</span></div>
+      </div>`
+    : '<small>知识库未启用</small>';
+  const docs = d.docs || [];
+  $('kbDocs').innerHTML = docs.length
+    ? docs.map(x => `<div class="tool"><code>${x.title}</code><small>分类: ${x.category} | 分块: ${x.chunks}</small>
+      <button class="secondary" style="padding:2px 10px;margin-top:4px" onclick="deleteKnowledge('${x.doc_id}')">删除</button></div>`).join('')
+    : '<small>暂无文档(共 ' + (d.total || 0) + ' 篇)</small>';
+}
+async function addKnowledge() {
+  $('kbMsg').textContent = ''; $('kbErr').classList.add('hidden');
+  const body = { title: $('kbTitle').value.trim(), content: $('kbContent').value.trim(), url: $('kbUrl').value.trim(), file: $('kbFile').value.trim(), category: $('kbCategory').value.trim() || '通用' };
+  if (!body.title) { $('kbErr').textContent = '请填写标题'; $('kbErr').classList.remove('hidden'); return; }
+  const res = await api('/api/knowledge', 'POST', body);
+  if (res.data.ok) { $('kbMsg').textContent = '已入库: ' + res.data.result.chunks + ' 个分块'; $('kbContent').value=''; $('kbUrl').value=''; $('kbFile').value=''; loadKnowledge(); }
+  else { $('kbErr').textContent = res.data.error || '入库失败'; $('kbErr').classList.remove('hidden'); }
+}
+async function deleteKnowledge(doc_id) {
+  const res = await api('/api/knowledge', 'DELETE', { doc_id });
+  loadKnowledge();
+}
+async function searchKnowledge() {
+  const query = $('kbQuery').value.trim();
+  if (!query) return;
+  const res = await api('/api/knowledge/search', 'POST', { query, limit: 3 });
+  if (res.status === 401) return logout();
+  const r = res.data.result || {};
+  const results = r.results || [];
+  $('kbSearchResult').innerHTML = results.length
+    ? `<small style="color:var(--muted)">模式: ${r.mode || ''} | 命中 ${r.count || 0}</small>` + results.map(x =>
+      `<div class="tool"><code>${x.title}</code><small>${(x.snippet || x.content || '').slice(0, 300)}</small></div>`).join('')
+    : '<small>无匹配结果</small>';
 }
 
 let cfgLoaded = false;
