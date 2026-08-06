@@ -7,6 +7,8 @@ from .file_tools import FileReadTool, FileWriteTool, GlobTool, GrepTool
 from .knowledge import KnowledgeAddTool, KnowledgeSearchTool
 from .memory_tools import MemoryAddTool, MemoryListTool, MemorySearchTool
 from .network import WebFetchTool, WebSearchTool
+from .plan_tools import PlanTool
+from .session_tools import SessionListTool, SessionLoadTool, SessionSaveTool
 from .qq_admin import (
     QqEssenceTool,
     QqGroupAnnounceTool,
@@ -18,6 +20,7 @@ from .qq_admin import (
 from .qq_info import QqFriendListTool, QqGroupInfoTool, QqGroupListTool, QqStrangerInfoTool
 from .qq_message import QqRecallTool, QqSendImageTool, QqSendLikeTool, QqSendVoiceTool
 from .skill_tools import SkillListTool, SkillStopTool, SkillUseTool
+from .subagent_tools import SubagentTool
 from .system import AskUserTool, BashTool, CronTool
 from .task_tools import TaskTools
 
@@ -58,6 +61,11 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         MemorySearchTool(),
         MemoryAddTool(),
         MemoryListTool(),
+        PlanTool(),
+        SubagentTool(),
+        SessionSaveTool(),
+        SessionLoadTool(),
+        SessionListTool(),
     ):
         registry.register(tool)
     return registry

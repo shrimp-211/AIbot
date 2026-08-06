@@ -63,6 +63,11 @@ class AgentEngine:
         self.file_memory = file_memory
         self._static_prompt: str | None = None
 
+        if self.subagent_manager is None:
+            from .subagent import SubagentManager
+
+            self.subagent_manager = SubagentManager(self.provider, self.config)
+
     # ---------- 入口 ----------
 
     async def process(self, event: AgentEvent) -> str | None:
@@ -88,6 +93,8 @@ class AgentEngine:
         await self._record_to_sqlite(event, "user", text)
         await self._load_memory_context(event, text)
         ctx = self._build_tool_context(event)
+        if self.subagent_manager is not None:
+            self.subagent_manager.bind_executor(self._make_subagent_executor(ctx))
         messages = self._build_messages(event, text)
         system_prompt = self._build_system_prompt(event)
 
@@ -396,6 +403,16 @@ class AgentEngine:
             return compress_tool_result(result)
         return compress_tool_result(json.dumps(result, ensure_ascii=False))
 
+    def _make_subagent_executor(self, ctx: ToolContext):
+        """构造子代理工具执行器(复用主代理的权限/异常/压缩逻辑)。"""
+
+        async def executor(name: str, args: dict, tool_filter: list[str] | None = None) -> str:
+            if tool_filter and name not in tool_filter:
+                return f"工具 {name} 不在子代理白名单内"
+            return await self._execute_tool(ctx, {"name": name, "arguments": args})
+
+        return executor
+
     # ---------- 工具上下文 ----------
 
     def _build_tool_context(self, event: AgentEvent) -> ToolContext:
@@ -414,5 +431,6 @@ class AgentEngine:
                 "loop": asyncio.get_running_loop(),
                 "sqlite_store": self.sqlite_store,
                 "file_memory": self.file_memory,
+                "tool_registry": self.tools,
             },
         )

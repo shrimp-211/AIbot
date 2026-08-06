@@ -37,6 +37,51 @@ class MemoryStore:
     def clear_working(self, session_id: str) -> None:
         self._working.pop(session_id, None)
 
+    # ---------- 会话检查点(Gemini CLI checkpointing) ----------
+
+    def save_checkpoint(self, session_id: str) -> dict[str, Any]:
+        """把当前工作记忆存为检查点,持久化到 db。"""
+        buf = self.get_working(session_id)
+        checkpoints = self._db.get("checkpoints", {})
+        checkpoints[session_id] = {"buf": buf, "ts": int(time.time())}
+        # 仅保留最近 50 个检查点
+        if len(checkpoints) > 50:
+            for sid in list(checkpoints)[:-50]:
+                checkpoints.pop(sid, None)
+        self._db.set("checkpoints", checkpoints)
+        return {"ok": True, "session_id": session_id, "messages": len(buf)}
+
+    def load_checkpoint(self, session_id: str) -> dict[str, Any] | None:
+        """恢复检查点到工作记忆。"""
+        checkpoints = self._db.get("checkpoints", {})
+        cp = checkpoints.get(session_id)
+        if not cp:
+            return None
+        self._working[session_id] = list(cp.get("buf", []))
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "messages": len(cp.get("buf", [])),
+            "saved_at": cp.get("ts", 0),
+        }
+
+    def list_checkpoints(self) -> list[dict[str, Any]]:
+        checkpoints = self._db.get("checkpoints", {})
+        return [
+            {
+                "session_id": sid,
+                "saved_at": cp.get("ts", 0),
+                "messages": len(cp.get("buf", [])),
+            }
+            for sid, cp in checkpoints.items()
+        ]
+
+    def clear_checkpoint(self, session_id: str) -> dict[str, Any]:
+        checkpoints = self._db.get("checkpoints", {})
+        existed = checkpoints.pop(session_id, None)
+        self._db.set("checkpoints", checkpoints)
+        return {"ok": True, "deleted": existed is not None}
+
     # ---------- 短期记忆(Episodic) ----------
 
     def _append_episodic(self, session_id: str, entries: list[dict]) -> None:
