@@ -760,6 +760,118 @@ async def test_engine_filtered_schemas():
     assert [s["name"] for s in engine._filtered_schemas("restricted")] == ["web_search"]
 
 
+async def test_tool_approval_flow():
+    """AuthManager 工具级交互审批:请求/批准授权/拒绝/过期清理。"""
+    auth = AuthManager()
+    auth.request_tool_approval("1001", "bash", {"command": "ls"})
+    rec = auth.get_pending_tool_approval("1001")
+    assert rec and rec["tool"] == "bash", rec
+    # 批准 -> 一次性授权该工具
+    res = auth.resolve_tool_approval("1001", True)
+    assert res.get("ok") and auth.is_tool_allowed("1001", "bash"), res
+    assert auth.get_pending_tool_approval("1001") is None
+    # TTL 过期后临时授权失效
+    auth._temp_tool_allows[("1001", "bash")] = {"ts": 0, "ttl": 1}
+    auth.is_tool_allowed("1001", "bash")  # 触发清理
+    assert not auth.is_tool_allowed("1001", "bash")
+    # 拒绝 -> 清空请求且不授权
+    auth.request_tool_approval("1002", "bash", {})
+    auth.resolve_tool_approval("1002", False)
+    assert not auth.is_tool_allowed("1002", "bash")
+    # 无待审批 -> 报错
+    assert "error" in auth.resolve_tool_approval("1003", True)
+
+
+async def test_tool_approval_required():
+    """ToolRegistry:ASK 决策抛 ToolApprovalRequired,_skip_permission 强制放行。"""
+    from src.agent.tools.base import Tool, ToolApprovalRequired, ToolContext, ToolRegistry
+    from src.security.auth import PermissionRule
+
+    auth = AuthManager(rules=[PermissionRule("tool", "needs_approval", "ask")])
+    registry = ToolRegistry(auth)
+    event = make_event("test", user_id="42")
+
+    class NeedApproval(Tool):
+        name = "needs_approval"
+
+        async def execute(self, ctx, **kwargs):
+            return "ok"
+
+    registry.register(NeedApproval())
+    ctx = ToolContext(event=event, adapter=None, auth=auth, config=Config({}), db=None)
+    raised = False
+    try:
+        await registry.execute("needs_approval", 1, ctx, query="x")
+    except ToolApprovalRequired as exc:
+        raised = True
+        assert exc.tool_name == "needs_approval"
+    assert raised, "ASK 工具应抛 ToolApprovalRequired"
+    # 临时授权后强制放行
+    result = await registry.execute(
+        "needs_approval", 1, ctx, _skip_permission=True, query="x"
+    )
+    assert result == "ok"
+
+
+async def test_classify_approval():
+    """工具审批回复分类:允许/拒绝词识别,长文本不误判。"""
+    from src.agent.engine import _classify_approval
+
+    assert _classify_approval("允许") == "approve"
+    assert _classify_approval("我批准执行") == "approve"
+    assert _classify_approval("可以") == "approve"
+    assert _classify_approval("继续") == "approve"
+    assert _classify_approval("拒绝") == "deny"
+    assert _classify_approval("不行") == "deny"
+    assert _classify_approval("不需要") == "deny"
+    assert _classify_approval("可以帮我看看这个文件吗") is None  # 长句不误判
+    assert _classify_approval("") is None
+    assert _classify_approval("随便聊聊今天天气如何啊哈哈哈哈") is None
+
+
+async def test_build_messages_approval():
+    """审批续接:批准注入"重新调用工具"指令,拒绝注入"调整方案",均不追加原始回复。"""
+    from src.agent.engine import AgentEngine
+
+    class FakeMemory:
+        def get_episodic(self, sid, limit):
+            return []
+
+        def get_working(self, sid):
+            return []
+
+    engine = AgentEngine(
+        provider=object(),
+        tools=object(),
+        memory=FakeMemory(),
+        auth=object(),
+        config=object(),
+        adapter=object(),
+        db=object(),
+        subagent_manager=object(),
+        skills=object(),
+    )
+    # 批准:system 指令指示重新调用工具,原始"允许"不进入消息
+    ev = make_event("允许")
+    ev.state["approval_decision"] = "approve"
+    ev.state["approval_tool"] = "bash"
+    msgs = engine._build_messages(ev, "允许")
+    sys_msgs = [m for m in msgs if m["role"] == "system"]
+    assert any("已批准" in m["content"] and "bash" in m["content"] for m in sys_msgs)
+    assert not any(m["role"] == "user" and m["content"] == "允许" for m in msgs)
+    # 拒绝:system 指令指示调整方案
+    ev2 = make_event("拒绝")
+    ev2.state["approval_decision"] = "deny"
+    ev2.state["approval_tool"] = "bash"
+    msgs2 = engine._build_messages(ev2, "拒绝")
+    sys_msgs2 = [m for m in msgs2 if m["role"] == "system"]
+    assert any("已拒绝" in m["content"] for m in sys_msgs2)
+    assert not any(m["role"] == "user" and m["content"] == "拒绝" for m in msgs2)
+    # 正常流程:用户消息照常追加
+    msgs3 = engine._build_messages(make_event("你好"), "你好")
+    assert any(m["role"] == "user" and m["content"] == "你好" for m in msgs3)
+
+
 async def run_all() -> bool:
     tests = [
         v

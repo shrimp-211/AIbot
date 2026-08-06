@@ -18,6 +18,15 @@ if TYPE_CHECKING:
     from ...utils.config import Config
 
 
+class ToolApprovalRequired(Exception):
+    """工具触发 ASK 决策且操作者非管理员:需要发起交互式审批。"""
+
+    def __init__(self, tool_name: str, args: dict):
+        self.tool_name = tool_name
+        self.args = args
+        super().__init__(f"工具 {tool_name} 需要用户审批")
+
+
 @dataclass
 class ToolContext:
     """工具执行上下文,携带运行所需的服务引用。"""
@@ -100,13 +109,23 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         return [t.to_openai_schema() for t in self._tools.values()]
 
-    async def execute(self, name: str, role_level: int, ctx: ToolContext, **kwargs: Any) -> Any:
+    async def execute(
+        self,
+        name: str,
+        role_level: int,
+        ctx: ToolContext,
+        *,
+        _skip_permission: bool = False,
+        **kwargs: Any,
+    ) -> Any:
         tool = self._tools.get(name)
         if tool is None:
             raise ValueError(f"未知工具: {name}")
-        decision = tool.check_permission(role_level)
-        if decision == Decision.DENY:
-            raise PermissionError(f"工具 {name} 需要更高权限(当前角色等级 {role_level})")
-        if decision == Decision.ASK and role_level < 7:
-            raise PermissionError(f"工具 {name} 需要管理员授权才能执行")
+        if not _skip_permission:
+            decision = tool.check_permission(role_level)
+            if decision == Decision.DENY:
+                raise PermissionError(f"工具 {name} 需要更高权限(当前角色等级 {role_level})")
+            if decision == Decision.ASK and role_level < 7:
+                # 不再直接拒绝:交给 engine 发起交互式审批(Claude Code 权限批准)
+                raise ToolApprovalRequired(name, kwargs)
         return await tool.execute(ctx, **kwargs)

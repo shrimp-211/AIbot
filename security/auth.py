@@ -124,6 +124,11 @@ class AuthManager:
         self._approved_users: set[str] = set()
         self.pending_approvals: dict[str, dict] = {}
         self._approval_ttl = 600  # 审批码有效期(秒)
+        # 工具级交互审批(Claude Code 权限批准):user_id -> 待审批的工具请求
+        self.pending_tool_approvals: dict[str, dict] = {}
+        # 临时工具授权(user_id, tool) -> {"ts", "ttl"}:批准后短时放行
+        self._temp_tool_allows: dict[tuple[str, str], dict] = {}
+        self._tool_approval_ttl = 300  # 工具审批请求有效期(秒)
 
     # ---------- 角色 ----------
 
@@ -189,6 +194,60 @@ class AuthManager:
         expired = [c for c, r in self.pending_approvals.items() if now - r.get("ts", 0) > self._approval_ttl]
         for c in expired:
             self.pending_approvals.pop(c, None)
+
+    # ---------- 工具级交互审批(Claude Code 权限批准) ----------
+
+    def request_tool_approval(
+        self, user_id: str, tool: str, args: dict, group_id: str | None = None
+    ) -> dict:
+        """登记一条待审批的工具请求,返回记录(重复请求刷新时间)。"""
+        self._expire_tool_approvals()
+        self.pending_tool_approvals[user_id] = {
+            "tool": tool,
+            "args": args,
+            "group_id": group_id,
+            "ts": time.time(),
+        }
+        return self.pending_tool_approvals[user_id]
+
+    def get_pending_tool_approval(self, user_id: str) -> dict | None:
+        self._expire_tool_approvals()
+        return self.pending_tool_approvals.get(user_id)
+
+    def resolve_tool_approval(self, user_id: str, approved: bool) -> dict:
+        """用户答复审批:批准则一次性授权该工具,拒绝/过期则清空请求。"""
+        self._expire_tool_approvals()
+        record = self.pending_tool_approvals.pop(user_id, None)
+        if not record:
+            return {"error": "没有待审批的工具请求"}
+        if approved:
+            self.allow_tool(user_id, record["tool"], ttl=self._tool_approval_ttl)
+        return {"ok": True, "tool": record["tool"], "approved": approved}
+
+    def _expire_tool_approvals(self) -> None:
+        now = time.time()
+        stale = [
+            uid
+            for uid, r in self.pending_tool_approvals.items()
+            if now - r.get("ts", 0) > self._tool_approval_ttl
+        ]
+        for uid in stale:
+            self.pending_tool_approvals.pop(uid, None)
+
+    def allow_tool(self, user_id: str, tool: str, ttl: float = 300) -> None:
+        """授予一次性临时工具权限(带 TTL,定期清理防泄漏)。"""
+        self._prune_temp_allows()
+        self._temp_tool_allows[(user_id, tool)] = {"ts": time.time(), "ttl": ttl}
+
+    def is_tool_allowed(self, user_id: str, tool: str) -> bool:
+        self._prune_temp_allows()
+        return (user_id, tool) in self._temp_tool_allows
+
+    def _prune_temp_allows(self) -> None:
+        now = time.time()
+        stale = [k for k, v in self._temp_tool_allows.items() if now - v["ts"] > v["ttl"]]
+        for k in stale:
+            self._temp_tool_allows.pop(k, None)
 
     # ---------- 三层决策 ----------
 

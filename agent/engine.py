@@ -49,7 +49,28 @@ def _repeated_tool_guidance(tool_name: str, streak: int) -> str:
     if streak >= _REPEATED_TOOL_L1_THRESHOLD:
         return _REPEATED_TOOL_L1_TEMPLATE.format(tool_name=tool_name, streak=streak)
     return ""
-from .tools.base import ToolContext, ToolRegistry
+
+
+def _classify_approval(text: str) -> str | None:
+    """分类工具审批回复:短文本命中允许/拒绝词,返回 approve/deny,否则 None。
+
+    仅匹配整体较短(<16 字符)的回复,避免把普通长消息误判为审批答复。
+    """
+    t = text.strip().lower().rstrip("。.!！?？~～")
+    if not t or len(t) > 16:
+        return None
+    if any(w in t for w in ("允许", "批准", "同意", "确认", "授权")):
+        return "approve"
+    if any(w in t for w in ("拒绝", "不同意", "取消", "不需要", "不批准")):
+        return "deny"
+    if t in ("可以", "yes", "y", "ok", "okay", "allow", "approve", "继续", "好", "行"):
+        return "approve"
+    if t in ("no", "n", "deny", "不行", "不要", "别", "不了"):
+        return "deny"
+    return None
+
+
+from .tools.base import ToolApprovalRequired, ToolContext, ToolRegistry
 
 if TYPE_CHECKING:
     from ..providers.base import BaseProvider
@@ -123,14 +144,30 @@ class AgentEngine:
         if fast is not None:
             return fast
 
+        # 工具审批续接:上一轮请求权限批准,本轮检测用户的允许/拒绝(Claude Code 权限批准)
+        approval_reply = False
+        pending = self.auth.get_pending_tool_approval(event.user_id)
+        if pending:
+            decision = _classify_approval(text)
+            if decision:
+                approval_reply = True
+                self.auth.resolve_tool_approval(event.user_id, decision == "approve")
+                event.state["approval_decision"] = decision
+                event.state["approval_tool"] = pending["tool"]
+            else:
+                # 用户转向新请求:放弃挂起的审批
+                self.auth.resolve_tool_approval(event.user_id, False)
+
         # 技能自动匹配:当前无激活技能时,若消息强匹配某技能描述则自动激活
         if self.skills is not None and self.skills.active(event.session_id) is None:
             matched = self.skills.auto_select(text)
             if matched is not None:
                 self.skills.activate(event.session_id, matched.name)
 
-        self.memory.add_message(event.session_id, "user", text)
-        await self._record_to_sqlite(event, "user", text)
+        # 审批回复是元消息(允许/拒绝),不写入对话记忆,避免污染上下文
+        if not approval_reply:
+            self.memory.add_message(event.session_id, "user", text)
+            await self._record_to_sqlite(event, "user", text)
         await self._load_memory_context(event, text)
 
         # ask_user 续接:上一轮向用户提问后,本轮注入提示并清除待答标记
@@ -392,7 +429,23 @@ class AgentEngine:
                     ),
                 }
             )
-        messages.append({"role": "user", "content": text})
+        # 工具审批续接:批准后指示重新调用工具,拒绝后要求调整方案
+        approval_decision = event.state.get("approval_decision")
+        approval_tool = event.state.get("approval_tool")
+        if approval_decision and approval_tool:
+            if approval_decision == "approve":
+                content = (
+                    f"你之前请求执行工具 **{approval_tool}** 并等待用户审批,"
+                    "用户已批准。请立即重新调用该工具完成之前的任务。"
+                )
+            else:
+                content = (
+                    f"你之前请求执行工具 **{approval_tool}**,用户已拒绝。"
+                    "请不要调用该工具,调整方案或向用户说明原因。"
+                )
+            messages.append({"role": "system", "content": content})
+        else:
+            messages.append({"role": "user", "content": text})
         return messages
 
     # ---------- ReAct 循环 ----------
@@ -485,14 +538,14 @@ class AgentEngine:
 
     @staticmethod
     def _tool_awaiting(output: str) -> bool:
-        """检测工具返回的 awaiting 标记(ask_user),用于终止当前 ReAct 回合。"""
+        """检测工具返回的 awaiting 标记(ask_user / 工具审批),用于终止当前 ReAct 回合。"""
         if not output:
             return False
         try:
             data = json.loads(output)
         except (json.JSONDecodeError, TypeError):
             return False
-        return isinstance(data, dict) and data.get("status") == "awaiting"
+        return isinstance(data, dict) and data.get("status") in ("awaiting", "awaiting_approval")
 
     async def _execute_tool(self, ctx: ToolContext, tool_call: dict) -> str:
         name = tool_call.get("name", "")
@@ -506,8 +559,14 @@ class AgentEngine:
             if decision == "block":
                 return "该工具调用已被策略阻止"
 
+        # 一次性授权:用户已批准执行该工具(交互式审批),跳过权限检查
+        force = self.auth.is_tool_allowed(ctx.event.user_id, name)
         try:
-            result = await self.tools.execute(name, role_level, ctx, **args)
+            result = await self.tools.execute(
+                name, role_level, ctx, _skip_permission=force, **args
+            )
+        except ToolApprovalRequired as exc:
+            return await self._request_tool_approval(ctx, exc)
         except PermissionError as exc:
             logger.warning(f"权限拦截工具 {name}: {exc}")
             return f"权限不足: {exc}"
@@ -519,6 +578,36 @@ class AgentEngine:
         if isinstance(result, str):
             return compress_tool_result(result)
         return compress_tool_result(json.dumps(result, ensure_ascii=False))
+
+    async def _request_tool_approval(self, ctx: ToolContext, exc: ToolApprovalRequired) -> str:
+        """工具触发 ASK:向用户发送审批请求并挂起当前回合(Claude Code 权限批准)。
+
+        记录待审批请求,用户下一条回复进入审批续接(process 中处理)。
+        """
+        from ..adapter.message import escape_cq
+
+        user_id = ctx.event.user_id
+        record = self.auth.request_tool_approval(user_id, exc.tool_name, exc.args)
+        args_preview = json.dumps(exc.args, ensure_ascii=False)[:200]
+        msg = (
+            "🔐 需要你的授权:\n"
+            f"Agent 想执行工具 **{escape_cq(exc.tool_name)}**\n"
+            f"参数: `{escape_cq(args_preview)}`\n"
+            "回复【允许】继续,或【拒绝】取消。"
+        )
+        try:
+            await ctx.event.reply(msg)
+        except Exception:  # noqa: BLE001
+            logger.exception("发送审批请求失败")
+        logger.info("工具 {} 请求审批(user={}, ts={:.0f})", exc.tool_name, user_id, record["ts"])
+        return json.dumps(
+            {
+                "status": "awaiting_approval",
+                "tool": exc.tool_name,
+                "message": "已向用户发送工具审批请求,等待用户允许/拒绝。",
+            },
+            ensure_ascii=False,
+        )
 
     def _make_subagent_executor(self, ctx: ToolContext):
         """构造子代理工具执行器(复用主代理的权限/异常/压缩逻辑)。"""
