@@ -107,6 +107,12 @@
       </div>
       <div id="pluginList"></div>
     </div>
+    <div class="card">
+      <div class="row"><h3 style="margin:0">插件市场</h3>
+        <button class="secondary" onclick="loadMarket()">刷新</button><span class="msg-green" id="marketMsg"></span>
+      </div>
+      <div id="marketList"><small>加载中...</small></div>
+    </div>
   </div>
 
   <div id="page-config" class="hidden">
@@ -346,6 +352,23 @@ async function loadPlugins() {
     : '<small>暂无外部插件</small>';
 }
 
+async function loadMarket() {
+  $('marketMsg').textContent = '';
+  const res = await api('/api/market');
+  if (res.status === 401) return logout();
+  const plugins = res.data.plugins || [];
+  $('marketList').innerHTML = plugins.length
+    ? plugins.map(p => `<div class="tool"><code>${p.name} ${p.version ? 'v'+p.version : ''}</code>
+      <small>${p.description} ${p.author ? ' — ' + p.author : ''} ${(p.tags||[]).join(',') || ''}</small>
+      <button class="secondary" style="padding:2px 10px;margin-top:4px" onclick="installMarket('${p.name}')">安装</button></div>`).join('')
+    : '<small>市场暂无插件</small>';
+}
+async function installMarket(name) {
+  $('marketMsg').textContent = '安装中...';
+  const res = await api('/api/market/install', 'POST', { name });
+  if (res.data.ok) { $('marketMsg').textContent = `已安装 ${name},并已重载`; loadPlugins(); }
+  else { $('marketMsg').textContent = '安装失败: ' + (res.data.error || ''); }
+}
 async function reloadPlugins() {
   $('pluginMsg').textContent = '';
   const res = await api('/api/plugins/reload', 'POST', {});

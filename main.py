@@ -589,6 +589,15 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     for plugin_dir in _plugin_dirs():
         await plugin_registry.load_from_directory(plugin_dir)
 
+    # I4 插件市场(参照 AstrBot):在线注册表 + 一键安装
+    from .plugins.installer import PluginInstaller
+    from .plugins.market import PluginMarket
+
+    plugin_market = PluginMarket(
+        registry_url=str(config.get("plugins.market_url", "") or ""),
+        installer=PluginInstaller(ROOT_DIR / "data" / "plugins"),
+    )
+
     # I4 插件生态:同步 @llm_tool 工具进引擎 + 安装生命周期钩子
     for ptool in plugin_registry.llm_tools():
         tools.register(ptool)
@@ -696,6 +705,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
                 "plugin_registry": plugin_registry,
                 "adapter_registry": adapter_registry,
                 "orchestrator": orchestrator,
+                "plugin_market": plugin_market,
             },
             config_path=config_path,
         )

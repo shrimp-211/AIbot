@@ -178,6 +178,8 @@ class WebUIServer:
         self._app.router.add_post("/api/broadcast", self._broadcast)
         self._app.router.add_get("/api/plugins", self._plugins_list)
         self._app.router.add_post("/api/plugins/reload", self._plugins_reload)
+        self._app.router.add_get("/api/market", self._market_list)
+        self._app.router.add_post("/api/market/install", self._market_install)
         self._app.router.add_get("/api/config", self._config_view)
         self._app.router.add_post("/api/config", self._config_save)
         self._app.router.add_get("/api/adapters", self._adapters_list)
@@ -702,6 +704,34 @@ class WebUIServer:
         return web.json_response({"ok": True, "history": history})
 
     # ---------- 插件重载 ----------
+
+    async def _market_list(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        market = self._deps.get("plugin_market")
+        plugins = await market.available(refresh=True) if market else []
+        return web.json_response({"ok": True, "plugins": plugins})
+
+    async def _market_install(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        market = self._deps.get("plugin_market")
+        if market is None:
+            return web.json_response({"ok": False, "error": "插件市场未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        result = await market.install(str(data.get("name", "") or ""))
+        # 安装成功后热重载插件
+        if result.get("ok"):
+            registry = self._deps.get("plugin_registry")
+            if registry is not None:
+                from ..main import _plugin_dirs
+
+                for plugin_dir in _plugin_dirs():
+                    await registry.reload_from_directory(plugin_dir)
+        return web.json_response(result)
 
     async def _plugins_reload(self, request: web.Request) -> web.Response:
         if not self._check_auth(request):
