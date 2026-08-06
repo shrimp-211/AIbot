@@ -96,6 +96,14 @@ class AgentEngine:
         self.memory.add_message(event.session_id, "user", text)
         await self._record_to_sqlite(event, "user", text)
         await self._load_memory_context(event, text)
+
+        # ask_user 续接:上一轮向用户提问后,本轮注入提示并清除待答标记
+        if self.memory is not None:
+            pending = self.memory.get_pending_question(event.session_id)
+            if pending:
+                event.state["awaiting_question"] = pending.get("question", "")
+                self.memory.clear_pending_question(event.session_id)
+
         ctx = self._build_tool_context(event)
         if self.subagent_manager is not None:
             self.subagent_manager.bind_executor(self._make_subagent_executor(ctx))
@@ -380,8 +388,22 @@ class AgentEngine:
                     await self.hooks.trigger(
                         "post_tool_use", tool_name=tc.get("name", ""), output=output
                     )
+                if self._tool_awaiting(output):
+                    # ask_user:本轮到此为止,等待用户回复后再继续
+                    return None
 
         return "任务步骤较多,已完成主要部分。如需继续处理,请告诉我下一步。"
+
+    @staticmethod
+    def _tool_awaiting(output: str) -> bool:
+        """检测工具返回的 awaiting 标记(ask_user),用于终止当前 ReAct 回合。"""
+        if not output:
+            return False
+        try:
+            data = json.loads(output)
+        except (json.JSONDecodeError, TypeError):
+            return False
+        return isinstance(data, dict) and data.get("status") == "awaiting"
 
     async def _execute_tool(self, ctx: ToolContext, tool_call: dict) -> str:
         name = tool_call.get("name", "")

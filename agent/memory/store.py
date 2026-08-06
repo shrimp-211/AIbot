@@ -37,6 +37,22 @@ class MemoryStore:
     def clear_working(self, session_id: str) -> None:
         self._working.pop(session_id, None)
 
+    # ---------- 待回答问题(ask_user 多轮续接) ----------
+
+    def set_pending_question(self, session_id: str, question: str) -> None:
+        """记录 agent 向用户提出的待回答问题(持久化,跨消息保留)。"""
+        pending = self._db.get("pending_questions", {})
+        pending[session_id] = {"question": question, "ts": int(time.time())}
+        self._db.set("pending_questions", pending)
+
+    def get_pending_question(self, session_id: str) -> dict[str, Any] | None:
+        return self._db.get("pending_questions", {}).get(session_id)
+
+    def clear_pending_question(self, session_id: str) -> None:
+        pending = self._db.get("pending_questions", {})
+        if pending.pop(session_id, None) is not None:
+            self._db.set("pending_questions", pending)
+
     # ---------- 会话检查点(Gemini CLI checkpointing) ----------
 
     def save_checkpoint(self, session_id: str) -> dict[str, Any]:

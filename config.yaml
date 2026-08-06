@@ -78,6 +78,13 @@ agent:
   max_iterations: 8        # ReAct 循环最大迭代次数
   max_context_tokens: 128000  # 上下文压缩触发阈值(超过 82% 自动压缩)
 
+# ---------- 记忆系统 ----------
+# 三层记忆默认开启,无需配置:
+# - 短期/工作记忆:data/agent.json(JsonKV)
+# - SQLite+FTS5 跨会话全文搜索:data/memory.sqlite3
+# - Markdown 文件记忆(MEMORY.md/USER.md/SOUL.md):data/memory/
+# 用户画像自动提炼:每 8 条用户消息触发一次 LLM 自我反思
+
 # ---------- 消息管道 ----------
 pipeline:
   group_whitelist: []      # 群白名单(QQ号列表),空数组=全部群

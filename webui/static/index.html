@@ -33,7 +33,7 @@
   #chat .msg { margin-bottom: 10px; }
   #chat .msg b { color: var(--accent); }
   #chat .msg.assistant b { color: var(--green); }
-  .nav { display: flex; gap: 8px; margin-bottom: 16px; }
+  .nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
   .nav button { background: transparent; border: 1px solid var(--border); }
   .nav button.active { background: var(--accent); border-color: var(--accent); }
   .error { color: #ff6b6b; margin-top: 8px; font-size: 13px; }
@@ -57,6 +57,10 @@
     <button class="active" data-page="status" onclick="showPage('status')">状态</button>
     <button data-page="tools" onclick="showPage('tools')">工具</button>
     <button data-page="tasks" onclick="showPage('tasks')">定时任务</button>
+    <button data-page="mcp" onclick="showPage('mcp')">MCP</button>
+    <button data-page="skills" onclick="showPage('skills')">技能</button>
+    <button data-page="audit" onclick="showPage('audit')">审计</button>
+    <button data-page="subagents" onclick="showPage('subagents')">子代理</button>
     <button data-page="chat" onclick="showPage('chat')">聊天测试</button>
   </div>
 
@@ -72,6 +76,22 @@
     <div class="card"><div id="taskList"></div></div>
   </div>
 
+  <div id="page-mcp" class="hidden">
+    <div class="card"><div id="mcpList"></div></div>
+  </div>
+
+  <div id="page-skills" class="hidden">
+    <div class="card"><div id="skillList"></div></div>
+  </div>
+
+  <div id="page-audit" class="hidden">
+    <div class="card"><div id="auditList"></div></div>
+  </div>
+
+  <div id="page-subagents" class="hidden">
+    <div class="card"><div id="subagentList"></div></div>
+  </div>
+
   <div id="page-chat" class="hidden">
     <div class="card">
       <div id="chat"></div>
@@ -79,6 +99,15 @@
         <input id="chatInput" placeholder="输入消息测试 Agent..." onkeydown="if(event.key==='Enter')sendChat()">
         <button onclick="sendChat()">发送</button>
       </div>
+    </div>
+    <div class="card">
+      <b>📢 群广播</b>
+      <div class="row" style="margin-top:10px">
+        <input id="broadcastGroup" placeholder="QQ 群号">
+        <input id="broadcastText" placeholder="要发送的消息" onkeydown="if(event.key==='Enter')sendBroadcast()">
+        <button onclick="sendBroadcast()">发送到群</button>
+      </div>
+      <div id="broadcastErr" class="error hidden"></div>
     </div>
   </div>
 </div>
@@ -111,9 +140,13 @@ async function doLogin() {
 
 function showPage(name) {
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.page === name));
-  ['status', 'tools', 'tasks', 'chat'].forEach(p => $('page-' + p).classList.toggle('hidden', p !== name));
+  ['status', 'tools', 'tasks', 'mcp', 'skills', 'audit', 'subagents', 'chat'].forEach(p => $('page-' + p).classList.toggle('hidden', p !== name));
   if (name === 'tools') loadTools();
   if (name === 'tasks') loadTasks();
+  if (name === 'mcp') loadMCP();
+  if (name === 'skills') loadSkills();
+  if (name === 'audit') loadAudit();
+  if (name === 'subagents') loadSubagents();
   if (name === 'chat') connectChat();
 }
 
@@ -146,6 +179,64 @@ async function loadTasks() {
     : '<small>暂无定时任务</small>';
 }
 
+async function loadMCP() {
+  const res = await api('/api/mcp');
+  if (res.status === 401) return logout();
+  const servers = res.data.servers || [];
+  $('mcpList').innerHTML = servers.length
+    ? servers.map(s => `
+      <div class="tool">
+        <code>${s.name}</code>
+        <small>运行中: ${s.running ? '✅' : '❌'} | ${s.command} | 工具: ${(s.tools || []).join(', ') || '无'}</small>
+      </div>`).join('')
+    : '<small>未配置 MCP 服务器(见 config.yaml 的 mcp.servers)</small>';
+}
+
+async function loadSkills() {
+  const res = await api('/api/skills');
+  if (res.status === 401) return logout();
+  const skills = res.data.skills || [];
+  $('skillList').innerHTML = skills.length
+    ? skills.map(s => `
+      <div class="tool">
+        <code>${s.name}</code>
+        <small>${s.description}</small>
+        <small style="color:var(--muted)">${s.content}</small>
+      </div>`).join('')
+    : '<small>暂无技能(SKILL.md)</small>';
+}
+
+async function loadAudit() {
+  const res = await api('/api/audit');
+  if (res.status === 401) return logout();
+  const entries = res.data.audit || [];
+  $('auditList').innerHTML = entries.length
+    ? entries.map(e => `
+      <div class="tool">
+        <code>${e.ts || ''} [${e.decision || ''}]</code>
+        <small>${e.tool_name || e.action || ''} — ${e.reason || ''}</small>
+        <small style="color:var(--muted)">user=${e.user_id} | ${(e.detail || '').slice(0, 120)}</small>
+      </div>`).join('')
+    : '<small>暂无审计记录</small>';
+}
+
+async function loadSubagents() {
+  const res = await api('/api/subagents');
+  if (res.status === 401) return logout();
+  const d = res.data;
+  const running = (d.running || []).length;
+  const results = d.results || {};
+  const done = Object.values(results).filter(r => r.status === 'done').length;
+  $('subagentList').innerHTML = `
+    <div class="tool"><code>运行中: ${running} | 已完成: ${done}</code></div>
+    ${Object.entries(results).map(([id, r]) => `
+      <div class="tool">
+        <code>${id} — ${r.status}</code>
+        <small>${(r.result || r.error || '').slice(0, 200)}</small>
+      </div>`).join('')
+    || '<small>暂无子代理任务</small>'}`;
+}
+
 let chatWs = null;
 function connectChat() {
   if (chatWs && chatWs.readyState <= 1) return;
@@ -168,6 +259,24 @@ function sendChat() {
   addChat('user', text);
   $('chatInput').value = '';
   chatWs.send(JSON.stringify({ text }));
+}
+
+async function sendBroadcast() {
+  const group_id = $('broadcastGroup').value.trim();
+  const text = $('broadcastText').value.trim();
+  $('broadcastErr').classList.add('hidden');
+  if (!group_id || !text) {
+    $('broadcastErr').textContent = '请填写群号和消息';
+    $('broadcastErr').classList.remove('hidden');
+    return;
+  }
+  const res = await api('/api/broadcast', 'POST', { group_id, text });
+  if (res.data.ok) {
+    $('broadcastText').value = '';
+  } else {
+    $('broadcastErr').textContent = res.data.error || '发送失败';
+    $('broadcastErr').classList.remove('hidden');
+  }
 }
 
 function logout() {

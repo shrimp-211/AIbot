@@ -24,6 +24,7 @@ from .skill_tools import SkillListTool, SkillStopTool, SkillUseTool
 from .subagent_tools import SubagentTool
 from .system import AskUserTool, BashTool, CronTool
 from .task_tools import TaskTools
+from .translate import TranslateTool
 
 
 def build_default_registry(auth: AuthManager) -> ToolRegistry:
@@ -68,6 +69,7 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         SessionLoadTool(),
         SessionListTool(),
         MCPServerListTool(),
+        TranslateTool(),
     ):
         registry.register(tool)
     return registry

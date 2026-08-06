@@ -184,6 +184,8 @@ class SubagentManager:
             self._results[job_id] = {"status": "error", "error": str(exc)}
         finally:
             self._jobs.pop(job_id, None)
+            status = (self._results.get(job_id) or {}).get("status", "unknown")
+            self._record(job_id, status)
 
     async def get_result(self, job_id: str, timeout: float = 120) -> dict[str, Any]:
         """查询结果;任务未完成则等待至 timeout。"""

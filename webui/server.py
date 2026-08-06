@@ -22,6 +22,28 @@ from ..adapter.message import MessageChain, MessageSegment
 from ..utils.config import Config
 
 STATIC_DIR = Path(__file__).parent / "static"
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+def _tail_jsonl(path: Path, limit: int = 100, max_bytes: int = 1_000_000) -> list[dict]:
+    """从文件尾部读取最多 limit 条 JSON 行(避免整体加载大文件)。"""
+    if not path.is_file():
+        return []
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            f.seek(max(0, size - max_bytes))
+            f.readline()  # 跳过可能被截断的首行
+            raw = f.read().decode("utf-8", "ignore").splitlines()
+    except OSError:
+        return []
+    entries: list[dict] = []
+    for line in raw[-limit:]:
+        try:
+            entries.append(json.loads(line))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return entries
 
 
 def _pbkdf2_hash(password: str, salt: bytes | None = None, iterations: int = 100_000) -> str:
@@ -77,6 +99,11 @@ class WebUIServer:
         self._app.router.add_get("/api/status", self._status)
         self._app.router.add_get("/api/tools", self._tools)
         self._app.router.add_get("/api/tasks", self._tasks)
+        self._app.router.add_get("/api/mcp", self._mcp_status)
+        self._app.router.add_get("/api/skills", self._skills)
+        self._app.router.add_get("/api/audit", self._audit)
+        self._app.router.add_get("/api/subagents", self._subagents)
+        self._app.router.add_post("/api/broadcast", self._broadcast)
         self._app.router.add_get("/ws/chat", self._chat_ws)
 
     # ---------- 生命周期 ----------
@@ -167,6 +194,86 @@ class WebUIServer:
         tasks = cron.list_tasks() if cron else []
         return web.json_response({"ok": True, "tasks": tasks})
 
+    async def _mcp_status(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        engine = self._deps.get("engine")
+        servers = (
+            engine.mcp_manager.list_status() if engine and engine.mcp_manager else []
+        )
+        return web.json_response({"ok": True, "servers": servers})
+
+    async def _skills(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        engine = self._deps.get("engine")
+        skills = engine.skills.all() if engine and engine.skills else []
+        return web.json_response(
+            {
+                "ok": True,
+                "skills": [
+                    {
+                        "name": s.name,
+                        "description": s.description,
+                        "content": s.content[:500],
+                    }
+                    for s in skills
+                ],
+            }
+        )
+
+    async def _audit(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        audit_path = ROOT_DIR / "data" / "audit.jsonl"
+        return web.json_response(
+            {"ok": True, "audit": _tail_jsonl(audit_path, limit=200)}
+        )
+
+    async def _subagents(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        engine = self._deps.get("engine")
+        mgr = engine.subagent_manager if engine else None
+        running = mgr.running() if mgr else []
+        results = mgr._results if mgr else {}
+        history = mgr.recent(20) if mgr else []
+        return web.json_response(
+            {
+                "ok": True,
+                "running": running,
+                "results": results,
+                "history": history,
+            }
+        )
+
+    async def _broadcast(self, request: web.Request) -> web.Response:
+        """管理员从 WebUI 向指定 QQ 群发送消息。"""
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        group_id = str(data.get("group_id", "") or "")
+        text = str(data.get("text", "") or "")
+        if not group_id or not text:
+            return web.json_response(
+                {"ok": False, "error": "需要 group_id 和 text"}, status=400
+            )
+        cron = self._deps.get("cron")
+        adapter = cron._adapter if cron is not None else None
+        if adapter is None or not hasattr(adapter, "send_group_msg"):
+            return web.json_response(
+                {"ok": False, "error": "QQ 适配器未连接"}, status=500
+            )
+        try:
+            await adapter.send_group_msg(group_id, text)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("WebUI 广播失败")
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+        return web.json_response({"ok": True, "group_id": group_id})
+
     # ---------- 聊天 ----------
 
     async def _chat_ws(self, request: web.Request) -> web.WebSocketResponse:
@@ -194,10 +301,17 @@ class WebUIServer:
                 message=MessageChain([MessageSegment.text(text)]),
                 is_tome=True,
             )
+
+            async def _cb(_event: AgentEvent, _text: str, at: bool = False) -> None:
+                if _text and not ws.closed:
+                    await ws.send_str(json.dumps({"role": "assistant", "text": _text}))
+
+            event._send_callback = _cb
             try:
                 reply = await engine.process(event)
             except Exception:  # noqa: BLE001
                 logger.exception("WebUI 聊天处理异常")
                 reply = "处理出错,请查看服务端日志。"
-            await ws.send_str(json.dumps({"role": "assistant", "text": reply or "..."}))
+            if reply and not ws.closed:
+                await ws.send_str(json.dumps({"role": "assistant", "text": reply}))
         return ws

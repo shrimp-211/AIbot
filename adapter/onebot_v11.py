@@ -95,8 +95,10 @@ class OneBotV11Adapter(BaseAdapter):
                     break
         finally:
             async with self._lock:
-                if self._connections.get(key) is ws:
-                    self._connections.pop(key, None)
+                # 按 ws 对象清理所有指向它的 key,避免 key 名变化导致的泄漏
+                stale = [k for k, v in self._connections.items() if v is ws]
+                for k in stale:
+                    self._connections.pop(k, None)
                 if self._active_ws is ws:
                     self._active_ws = next(iter(self._connections.values()), None)
             logger.info(
@@ -116,8 +118,19 @@ class OneBotV11Adapter(BaseAdapter):
 
         post_type = data.get("post_type")
         if post_type == "message":
+            sid = str(data.get("self_id", "") or "")
+            if sid:
+                asyncio.create_task(self._adopt_connection(sid, ws))
             self._active_ws = ws
             asyncio.create_task(self._handle_message(data))
+
+    async def _adopt_connection(self, sid: str, ws: web.WebSocketResponse) -> None:
+        """按消息中的 self_id 将连接归位,支持多机器人同时在线。"""
+        async with self._lock:
+            if self._connections.get("default") is ws:
+                self._connections.pop("default", None)
+            self._connections[sid] = ws
+            self._active_ws = ws
 
     async def _handle_message(self, data: dict[str, Any]) -> None:
         if self.on_event is not None:

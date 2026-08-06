@@ -148,7 +148,8 @@ class AskUserTool(Tool):
 
     async def execute(self, ctx: ToolContext, question: str) -> Any:
         await ctx.event.reply(f"🔎 我需要确认一下:{question}")
-        ctx.event.state["awaiting_question"] = question
+        if ctx.memory is not None:
+            ctx.memory.set_pending_question(ctx.event.session_id, question)
         return {
             "status": "awaiting",
             "message": f"已向用户提问: {question}。等待用户回复后再继续任务。",
