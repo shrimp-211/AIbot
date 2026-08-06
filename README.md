@@ -8,24 +8,23 @@
 
 | 领域 | 能力 |
 |---|---|
-| 对话 | ReAct 工具循环(Think→Act→Observe),支持**并行工具调用**,上下文自动压缩 |
-| 网络 | 多引擎搜索(Tavily→Brave→DuckDuckGo 回退)、网页抓取(SSRF 防护) |
-| 文件 | 读/写/**精确编辑**(file_edit)、glob 匹配、grep 搜索(ReDoS 防护) |
-| 系统 | Shell 命令执行(危险命令拦截)、定时提醒、用户询问(ask_user 多轮续接) |
-| 任务 | Todo 追踪、子代理委派(Explore/Plan/General)、Plan 模式 |
-| 知识 | RAG 知识库添加与检索、SQLite+FTS5 跨会话全文搜索、Markdown 文件记忆 |
+| 对话 | ReAct 工具循环(Think→Act→Observe),支持**并行工具调用**,上下文自动压缩,超大工具结果落盘 |
+| 感知 | 多模态理解:图片 OCR+视觉问答(无视觉模型自动降级 OCR)、语音转文字(STT)、视频关键帧摘要、PDF/Word/PPT/Excel 文档解析、代码分析 |
+| 生成 | AIGC 生成:图片(pollinations 免费/openai 自动回退)、视频(Runway)、语音合成(Edge TTS)、混合媒体 |
+| 知识 | **向量知识库 RAG**(BM25+FAISS+RRF 融合+重排,依赖缺失自动降级关键词)、URL/多格式文档入库、SQLite+FTS5 全文搜索、Markdown 文件记忆 |
 | 记忆 | 三层记忆(工作+短期+长期)+ 用户画像 + 自动记忆 + 自我反思 |
-| QQ 群 | 踢人/禁言/设管理/精华/公告/群文件、通知事件(欢迎/欢送/防撤回/请求审批) |
-| QQ 消息 | 发图/发语音/撤回/点赞 |
-| QQ 信息 | 群信息/群列表/好友列表/用户信息 |
-| MCP | Model Context Protocol 外部工具接入 |
-| 技能 | SKILL.md 技能系统(工具白名单 + 自动匹配) |
-| 插件 | 外部插件热加载、4 种 handler、依赖注入(含 AdapterRegistry)、plugin.json 元数据 |
-| 安全 | 7 级权限 + deny→ask→allow 三层决策 + 可信目录/沙箱 + 审计日志 |
-| 平台 | ReverseDriver 共享服务端 + 适配器插件化(`data/adapters/`)、OneBot(反向WS/正向WS/HTTP)、QQ 官方 Webhook、Telegram |
+| 网络 | 多引擎搜索(Tavily→Brave→DuckDuckGo 回退)、网页抓取(SSRF 防护) |
+| 文件/系统 | 读/写/编辑、glob/grep(ReDoS 防护)、Shell 命令(**沙箱隔离**:local/docker 自动降级)、Python 沙箱、定时提醒、ask_user 多轮续接 |
+| 任务 | Todo 追踪、子代理委派(Explore/Plan/General)、Plan 模式、多 API 编排器(parallel/race/vote/fusion/fallback/cost_aware) |
+| QQ 群 | 踢人/禁言/设管理/精华/公告/群文件、群友风人格 + 复读检测、戳一戳/表情回应/骰子/音乐,通知事件(欢迎/欢送/防撤回/审批) |
+| QQ 消息 | 发图/发语音/发视频/撤回/点赞,富媒体 CQ 构造(图片/语音/视频/骰子/音乐/合并转发) |
+| 平台 | ReverseDriver 共享服务端 + 适配器插件化、OneBot(反向WS/正向WS/HTTP)、NapCat 扩展 API(poke/emoji_like/OCR)、QQ 官方、Telegram、统一 Webhook |
+| 插件 | metadata.yaml 目录规范、生命周期钩子、@llm_tool 工具装饰器、一键安装器、热重载、**在线插件市场** |
+| 人格 | 多人格系统:db 人格 + **文件式人格**(`data/personas/*.md` 直接投放)、工具白名单、会话级热切换 |
+| 安全 | 7 级权限 + deny→ask→allow 三层决策 + 可信目录/沙箱 + 审计日志 + SSRF/ReDoS 防护 |
 | 反馈 | 私聊/WebUI 实时处理进度(⏳ 思考中 / 🔧 正在执行),群聊自动抑制不刷屏 |
-| 统计 | LLM token 用量与估算成本统计(`/cost` + WebUI 状态页),模型热切换(`/model`) |
-| 管理 | WebUI 控制台(状态/工具/任务/广播/MCP/技能/审计/子代理) |
+| 统计 | LLM token 用量与估算成本统计(`/cost` + WebUI),模型热切换(`/model`),编排器延迟/成本统计 |
+| 管理 | WebUI 控制台:状态/工具/定时任务/知识库/提供商测试/插件+市场/适配器/编排器/聊天/审计 |
 
 ## 快速开始
 

@@ -2,6 +2,41 @@
 
 本项目的变更记录。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [2.0.0] - 2026-08-07
+
+### 新增:多模态感知层(v1.4 Smart Perception)
+- **统一感知器** `agent/perception.py`:ImagePerceiver(OCR 多后端 pytesseract→PaddleOCR + 视觉问答,无视觉模型自动降级 OCR)/ AudioPerceiver(STT)/ VideoPerceiver(关键帧抽取,临时帧自动清理)/ DocumentPerceiver(PDF/Word/PPT/Excel/EPUB)/ CodePerceiver
+- **Provider 能力声明** `providers/modalities.py`:text/image/audio/video/streaming/function_call 模态,按能力过滤工具(文本模型自动剔除 vision/audio 工具)
+- **四类新 Provider 抽象**:STTProvider(Whisper API/本地 faster-whisper)/ TTSProvider(Edge 免费)/ EmbeddingProvider(OpenAI/本地 sentence-transformers,链式降级)/ RerankProvider(Cohere)
+- **6 个感知工具**:vision_analyze / ocr_extract / audio_transcribe / video_summarize / document_parse / media_analyze
+
+### 新增:向量知识库 + AIGC 生成(v1.5 Smart Knowledge & Generation)
+- **向量知识库** `agent/knowledge/`:语义/markdown/定长分块 + 纯 Python BM25 + FAISS 稠密索引 + RRF 融合 + Cohere/本地重排;依赖缺失自动降级关键词检索;URL/PDF/Word/PPT 多格式入库(SSRF 防护)
+- **AIGC 生成层** `agent/generation.py`:ImageGenerator(pollinations 免费/openai,失败自动回退)/ VideoGenerator(Runway 任务式轮询)/ AudioGenerator(Edge TTS)/ MixedMediaGenerator
+- **生成工具**:image_generate / video_generate / tts_speak / mixed_media;knowledge_add/search/list 升级向量混合检索
+
+### 新增:沙箱系统 + 运行时增强(v1.6 Smart Sandbox)
+- **沙箱包** `agent/sandbox/`:ShellSandbox(local/docker 自动降级)/ PythonSandbox(子进程隔离)/ FileSandbox(路径映射防穿越)/ BrowserSandbox(Playwright 惰性)/ SandboxSessionPool(LRU 淘汰)
+- **运行时**:tool_result_disk(超大结果落盘 data/tool_results,防上下文膨胀)/ interrupt(会话级中断,工具循环前检查)/ followup(消息排队)
+- **新工具**:tool_result_read / python_exec;bash 接入沙箱会话池
+
+### 新增:插件生态 + QQ 群文化适配(v1.7 QQ-Native)
+- **插件生态**:metadata.yaml 目录规范 / 生命周期钩子(on_startup/on_agent_done/after_message_sent/on_llm_request 等)/ @llm_tool 装饰器(函数→结构化工具)/ 一键安装器(git+依赖)/ 热重载轮询 / 在线插件市场
+- **QQ 群文化**:群友风 system prompt(口语/颜文字/简短)+ 复读检测(连续 N 次被@ 时跟上)+ 关键词表情建议
+- **NapCat 完善**:依据 doc.napneko.icu 补齐 poke/emoji_like/OCR/合并转发/文件下载等扩展 API;CQ 富媒体构造器(图片/语音/视频/骰子/音乐/转发);社交工具(戳一戳/表情/骰子/音乐/OCR)
+
+### 新增:全平台(Dashboard + 编排器 + 基础设施)
+- **多 API 编排器** `agent/orchestrator.py`:parallel/race/vote/fusion/fallback/cost_aware 六模式,记录延迟/错误/成本
+- **模型能力矩阵** `agent/model_registry.py`:按任务(vision/reasoning/cheap 等)路由到合适模型
+- **统一 Webhook 服务器** `adapter/webhook_server.py`:单端口 POST /webhook/<platform> 多平台事件路由
+- **渐进式 SQLModel** `storage/models.py` + `migration.py`:Persona/CronJob/ApiKey/PluginMeta/Conversation 表 + JsonKV 迁移(可选)
+- **WebUI 高度完善**:知识库管理(上传/检索测试/删除)/ Provider 状态与连通性测试 / 定时任务 CRUD+历史 / 插件重载+市场 / 编排器统计 / 聊天区分思考进度与回复
+- **人类体验**:/help 按领域分组 + QQ 环境友好回复引导;文件式人格(data/personas/*.md)
+
+### 安全与质量
+- 两轮自动代码审查修复 26 项缺陷(未 await 异步适配器方法、WS 子协议鉴权、fallback 链模态遮蔽、FAISS 并发锁、密钥掩码回填等)
+- SSRF/ReDoS 防护、沙箱隔离、CQ 注入转义、敏感配置掩码全程保留
+
 ## [1.3.0] - 2026-08-07
 
 ### 新增
