@@ -502,6 +502,24 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     logger.info("知识库: {}", knowledge.stats())
     logger.info("生成层: {}", generation.stats())
 
+    # 沙箱系统 + Agent 运行时增强(I3):会话资源池 / 超大结果落盘 / 中断 / follow-up
+    from .agent.followup import FollowUpQueue
+    from .agent.interrupt import InterruptController
+    from .agent.sandbox import SandboxSessionPool
+    from .agent.tool_result_disk import ToolResultDisk
+
+    sandbox_cfg = config.get("sandbox", {}) or {}
+    sandbox_pool = SandboxSessionPool(
+        max_sessions=int(sandbox_cfg.get("max_sessions", 16) or 16),
+        base_dir=str(ROOT_DIR / "data" / "sandbox"),
+    )
+    tool_result_disk = ToolResultDisk(
+        data_dir=ROOT_DIR / "data" / "tool_results",
+        limit=int(sandbox_cfg.get("result_limit", 4000) or 4000),
+    )
+    interrupt = InterruptController()
+    followup = FollowUpQueue()
+
     # 记忆 / 人格 / 钩子 / 定时任务 / 技能
     memory = MemoryStore(db)
     sqlite_store = SQLiteStore(ROOT_DIR / "data" / "memory.sqlite3")
@@ -534,6 +552,10 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         perception=perception,
         knowledge=knowledge,
         generation=generation,
+        tool_result_disk=tool_result_disk,
+        sandbox_pool=sandbox_pool,
+        interrupt=interrupt,
+        followup=followup,
     )
 
     # 插件注册中心

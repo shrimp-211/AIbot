@@ -47,9 +47,37 @@ class BashTool(Tool):
             await self._audit(ctx, command, "deny", "工作目录不在可信范围内")
             return {"error": f"工作目录不在可信范围内: {workdir}"}
 
-        # 沙箱模式
+        # 沙箱模式:优先用会话池的 ShellSandbox(local/docker 按可用性自动降级),
+        # 无池时退化为原始命令执行(仍走超时保护)
         if ctx.auth.sandbox_enabled:
-            command = self._sandbox_wrap(command, workdir or ".")
+            pool = ctx.extra.get("sandbox_pool")
+            if pool is not None:
+                sandbox = pool.get(ctx.event.session_id).shell
+                res = await sandbox.run(command, timeout=int(timeout or 30))
+                await self._audit(
+                    ctx, command, "allow", "",
+                    "ok" if res.get("exit_code") == 0 else ("timeout" if res.get("timed_out") else "error"),
+                )
+                if res.get("timed_out"):
+                    return {"error": "命令执行超时"}
+                return {
+                    "exit_code": res.get("exit_code"),
+                    "stdout": (res.get("stdout") or "")[:4000],
+                    "stderr": (res.get("stderr") or "")[:1000],
+                }
+            from ..sandbox import ShellSandbox
+
+            sandbox = ShellSandbox(workdir=workdir or ".")
+            res = await sandbox.run(command, timeout=int(timeout or 30))
+            if res.get("timed_out"):
+                await self._audit(ctx, command, "allow", "", "timeout")
+                return {"error": "命令执行超时"}
+            await self._audit(ctx, command, "allow", "", "ok" if res.get("exit_code") == 0 else "error")
+            return {
+                "exit_code": res.get("exit_code"),
+                "stdout": (res.get("stdout") or "")[:4000],
+                "stderr": (res.get("stderr") or "")[:1000],
+            }
 
         try:
             proc = await asyncio.create_subprocess_shell(

@@ -109,6 +109,10 @@ class AgentEngine:
         perception: Any = None,
         knowledge: Any = None,
         generation: Any = None,
+        tool_result_disk: Any = None,
+        sandbox_pool: Any = None,
+        interrupt: Any = None,
+        followup: Any = None,
     ):
         self.provider = provider
         self.tools = tools
@@ -129,6 +133,10 @@ class AgentEngine:
         self.perception = perception
         self.knowledge = knowledge
         self.generation = generation
+        self.tool_result_disk = tool_result_disk
+        self.sandbox_pool = sandbox_pool
+        self.interrupt = interrupt
+        self.followup = followup
         self._static_prompt: str | None = None
         self.messages_processed = 0  # 累计处理消息数(WebUI 统计)
 
@@ -187,6 +195,10 @@ class AgentEngine:
         """处理一条消息,返回回复文本(返回 None 表示不回复)。"""
         if event.is_stopped:
             return None
+
+        # 新回合开始:清除该会话的中断标记
+        if self.interrupt is not None:
+            self.interrupt.reset(event.session_id)
 
         self.messages_processed += 1
         text = event.plain_text.strip()
@@ -652,6 +664,9 @@ class AgentEngine:
 
             async def _run_one(tc: dict) -> str:
                 name = tc.get("name", "")
+                # 中断检查:用户已请求中断则停止继续调用工具
+                if self.interrupt is not None and self.interrupt.is_interrupted(ctx.event.session_id):
+                    return "已收到中断请求,停止执行工具。"
                 # 工具执行前提示进度(仅私聊/WebUI)
                 await self._send_progress(ctx, f"🔧 正在执行 `{name}`...")
                 output = await self._execute_tool(ctx, tc)
@@ -745,9 +760,11 @@ class AgentEngine:
             # 不向模型泄漏异常细节(CLAUDE.md 安全规范 3)
             return "工具执行出错,请查看服务端日志"
 
-        if isinstance(result, str):
-            return compress_tool_result(result)
-        return compress_tool_result(json.dumps(result, ensure_ascii=False))
+        raw = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+        # 超大结果落盘:超过阈值时全文存盘,向模型返回引用标记(防上下文膨胀)
+        if self.tool_result_disk is not None:
+            raw = await self.tool_result_disk.store(raw, name)
+        return compress_tool_result(raw)
 
     async def _request_tool_approval(self, ctx: ToolContext, exc: ToolApprovalRequired) -> str:
         """工具触发 ASK:向用户发送审批请求并挂起当前回合(Claude Code 权限批准)。
@@ -819,5 +836,9 @@ class AgentEngine:
                 "perception": self.perception,
                 "knowledge": self.knowledge,
                 "generation": self.generation,
+                "tool_result_disk": self.tool_result_disk,
+                "sandbox_pool": self.sandbox_pool,
+                "interrupt": self.interrupt,
+                "followup": self.followup,
             },
         )

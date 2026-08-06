@@ -34,6 +34,7 @@ from .qq_admin import (
 )
 from .qq_info import QqFriendListTool, QqGroupInfoTool, QqGroupListTool, QqStrangerInfoTool
 from .qq_message import QqRecallTool, QqSendImageTool, QqSendLikeTool, QqSendVoiceTool
+from .sandbox_tools import PythonExecTool, ToolResultReadTool
 from .qq_social_tools import (
     QqOcrTool,
     QqSendDiceTool,
@@ -85,6 +86,8 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         QqSendDiceTool(),
         QqSendMusicTool(),
         QqOcrTool(),
+        ToolResultReadTool(),
+        PythonExecTool(),
         SkillListTool(),
         SkillUseTool(),
         SkillStopTool(),

@@ -198,6 +198,13 @@ security:
   # ⚠️ trusted_folders 为空且 sandbox_enabled=false 时,启动会打印安全警告:
   #    对外部署前请把 trusted_folders 设为 agent.workdir,或启用沙箱
 
+# ---------- 沙箱系统与运行时(I3) ----------
+# 会话级沙箱资源池 + 超大工具结果落盘 + 中断/follow-up 控制
+sandbox:
+  max_sessions: 16          # 会话池上限(LRU 淘汰,防资源泄漏)
+  result_limit: 4000        # 工具结果超此字符数自动落盘到 data/tool_results/
+  shell_backend: local      # local(子进程) | docker(需安装 docker,缺失自动降级 local)
+
 # ---------- WebUI 控制台 ----------
 webui:
   enabled: true
