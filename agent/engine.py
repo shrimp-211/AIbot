@@ -106,6 +106,7 @@ class AgentEngine:
         mcp_manager: Any = None,
         audit_logger: Any = None,
         usage_tracker: Any = None,
+        perception: Any = None,
     ):
         self.provider = provider
         self.tools = tools
@@ -123,6 +124,7 @@ class AgentEngine:
         self.file_memory = file_memory
         self.mcp_manager = mcp_manager
         self.audit_logger = audit_logger
+        self.perception = perception
         self._static_prompt: str | None = None
         self.messages_processed = 0  # 累计处理消息数(WebUI 统计)
 
@@ -398,8 +400,13 @@ class AgentEngine:
             base = allowlist if allowlist is not None else self.tools.names()
             allowlist = [n for n in base if n in global_allow]
         if allowlist is None:
-            return self.tools.schemas()
-        return [s for s in self.tools.schemas() if s["name"] in allowlist]
+            schemas = self.tools.schemas()
+        else:
+            schemas = [s for s in self.tools.schemas() if s["name"] in allowlist]
+        # 按 Provider 模态能力过滤(如文本模型剔除 vision/audio 工具)
+        from ..providers.modalities import filter_tools_for_modalities
+
+        return filter_tools_for_modalities(schemas, getattr(self.provider, "modalities", None))
 
     def _build_static_prompt(self) -> str:
         if self._static_prompt is None:
@@ -407,7 +414,7 @@ class AgentEngine:
                 "以下是你可以使用的工具(工具名: 用途):",
                 "",
             ]
-            for s in self.tools.schemas():
+            for s in self._filtered_schemas(None):
                 props = s.get("parameters", {}).get("properties", {})
                 param_desc = (
                     ", ".join(f"{k}({v.get('type', '')})" for k, v in props.items())
@@ -758,5 +765,6 @@ class AgentEngine:
                 "tool_registry": self.tools,
                 "mcp_manager": self.mcp_manager,
                 "audit_logger": self.audit_logger,
+                "perception": self.perception,
             },
         )

@@ -8,6 +8,14 @@ from .knowledge import KnowledgeAddTool, KnowledgeSearchTool
 from .memory_tools import MemoryAddTool, MemoryListTool, MemorySearchTool
 from .mcp_tools import MCPServerListTool
 from .network import WebFetchTool, WebSearchTool
+from .perception_tools import (
+    AudioTranscribeTool,
+    DocumentParseTool,
+    MediaAnalyzeTool,
+    OcrTool,
+    VideoSummarizeTool,
+    VisionAnalyzeTool,
+)
 from .plan_tools import PlanTool
 from .session_tools import SessionListTool, SessionLoadTool, SessionSaveTool
 from .qq_admin import (
@@ -71,6 +79,12 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         SessionListTool(),
         MCPServerListTool(),
         TranslateTool(),
+        VisionAnalyzeTool(),
+        OcrTool(),
+        AudioTranscribeTool(),
+        VideoSummarizeTool(),
+        DocumentParseTool(),
+        MediaAnalyzeTool(),
     ):
         registry.register(tool)
     return registry

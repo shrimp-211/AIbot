@@ -11,6 +11,13 @@ from openai import AsyncOpenAI
 from loguru import logger
 
 from .base import BaseProvider
+from .modalities import (
+    DEFAULT_MODALITIES,
+    MODALITY_FUNCTION_CALL,
+    MODALITY_IMAGE,
+    MODALITY_STREAMING,
+    MODALITY_TEXT,
+)
 
 
 class OpenAICompatibleProvider(BaseProvider):
@@ -28,6 +35,12 @@ class OpenAICompatibleProvider(BaseProvider):
             base_url=self.base_url or None,
             timeout=60.0,
         )
+        # 多模态模型(gpt-4o 及更新)额外声明图像能力
+        model = (self.model or "").lower()
+        if any(k in model for k in ("gpt-4o", "gpt-4.1", "gpt-4.5", "vision", "vl", "qwen2.5-vl")):
+            self.modalities = DEFAULT_MODALITIES | {MODALITY_IMAGE}
+        if model and not self.reasoning_effort:
+            self.modalities |= {MODALITY_STREAMING, MODALITY_FUNCTION_CALL}
 
     async def chat(
         self,

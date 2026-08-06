@@ -11,6 +11,12 @@ from typing import Any
 from loguru import logger
 
 from .base import BaseProvider
+from .modalities import (
+    DEFAULT_MODALITIES,
+    MODALITY_FUNCTION_CALL,
+    MODALITY_IMAGE,
+    MODALITY_STREAMING,
+)
 
 
 class AnthropicProvider(BaseProvider):
@@ -20,6 +26,8 @@ class AnthropicProvider(BaseProvider):
         super().__init__(config)
         self.api_version = config.get("api_version", "2023-06-01")
         self.max_tokens = int(config.get("max_tokens", 8192) or 8192)
+        # Claude 系列原生多模态(图像)且支持流式与函数调用
+        self.modalities = DEFAULT_MODALITIES | {MODALITY_IMAGE, MODALITY_STREAMING, MODALITY_FUNCTION_CALL}
         # extended_thinking(参考 Claude Code):thinking.enabled + budget_tokens
         thinking_cfg = config.get("thinking") or {}
         if isinstance(thinking_cfg, bool):

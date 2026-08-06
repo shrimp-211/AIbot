@@ -12,6 +12,8 @@ from typing import Any
 
 from loguru import logger
 
+from .modalities import DEFAULT_MODALITIES
+
 # 模型 -> 上下文窗口(按模型名子串匹配,越长 key 越优先)
 _CONTEXT_WINDOWS: dict[str, int] = {
     "opus-4": 1_000_000,
@@ -49,6 +51,8 @@ def estimate_context_window(model: str) -> int:
 
 class BaseProvider(ABC):
     name: str = "base"
+    # 模态能力声明:默认文本 + 函数调用;多模态模型在子类覆盖
+    modalities: frozenset[str] = DEFAULT_MODALITIES
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -171,3 +175,113 @@ def create_provider(config: dict[str, Any]) -> BaseProvider:
     from .openai_compatible import OpenAICompatibleProvider
 
     return OpenAICompatibleProvider(config)
+
+
+# ---------------------------------------------------------------------------
+# 多模态 Provider 抽象(参照 AstrBot: Chat/STT/TTS/Embedding/Rerank 五类)
+# 前四类在此定义,与 LLM 并列;实际实现放在 providers/sources/ 下。
+# ---------------------------------------------------------------------------
+
+
+class STTProvider(ABC):
+    """语音转文字(识别)。"""
+    name: str = "stt"
+
+    def __init__(self, config: dict[str, Any]):
+        self.config = config or {}
+
+    @abstractmethod
+    async def transcribe(self, audio_path: str, **kwargs: Any) -> str:
+        """将本地音频文件转写为文本。"""
+        raise NotImplementedError
+
+    async def test(self) -> bool:
+        return bool(self.config.get("api_key"))
+
+
+class TTSProvider(ABC):
+    """文字转语音(合成)。"""
+    name: str = "tts"
+
+    def __init__(self, config: dict[str, Any]):
+        self.config = config or {}
+
+    @abstractmethod
+    async def synthesize(self, text: str, output_path: str, **kwargs: Any) -> str:
+        """将文本合成为语音文件,返回文件路径。"""
+        raise NotImplementedError
+
+    async def test(self) -> bool:
+        return True
+
+
+class EmbeddingProvider(ABC):
+    """文本向量化。"""
+    name: str = "embedding"
+
+    def __init__(self, config: dict[str, Any]):
+        self.config = config or {}
+        self.model = (config or {}).get("model", "")
+
+    @abstractmethod
+    async def embed(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
+        """将文本列表编码为向量列表。"""
+        raise NotImplementedError
+
+    async def test(self) -> bool:
+        return True
+
+
+class RerankProvider(ABC):
+    """检索结果重排序。"""
+    name: str = "rerank"
+
+    def __init__(self, config: dict[str, Any]):
+        self.config = config or {}
+        self.model = (config or {}).get("model", "")
+
+    @abstractmethod
+    async def rerank(self, query: str, documents: list[str], **kwargs: Any) -> list[float]:
+        """按与 query 的相关度给 documents 打分(0~1,越大越相关)。"""
+        raise NotImplementedError
+
+    async def test(self) -> bool:
+        return bool(self.config.get("api_key"))
+
+
+def create_stt_provider(config: dict[str, Any]) -> STTProvider:
+    ptype = (config or {}).get("type", "whisper")
+    if ptype in ("whisper", "openai"):
+        from .sources.stt_whisper import WhisperSTTProvider
+
+        return WhisperSTTProvider(config or {})
+    raise ValueError(f"未知 STT Provider: {ptype}")
+
+
+def create_tts_provider(config: dict[str, Any]) -> TTSProvider:
+    ptype = (config or {}).get("type", "edge")
+    if ptype in ("edge", "edge-tts"):
+        from .sources.tts_edge import EdgeTTSProvider
+
+        return EdgeTTSProvider(config or {})
+    raise ValueError(f"未知 TTS Provider: {ptype}")
+
+
+def create_embedding_provider(config: dict[str, Any]) -> EmbeddingProvider:
+    ptype = (config or {}).get("type", "openai")
+    if ptype in ("openai", "openai_compatible"):
+        from .sources.embedding_openai import OpenAIEmbeddingProvider
+
+        return OpenAIEmbeddingProvider(config or {})
+    raise ValueError(f"未知 Embedding Provider: {ptype}")
+
+
+def create_rerank_provider(config: dict[str, Any]) -> RerankProvider:
+    ptype = (config or {}).get("type", "none")
+    if ptype in ("none", "disabled"):
+        return None  # type: ignore[return-value]
+    if ptype in ("cohere",):
+        from .sources.rerank_cohere import CohereRerankProvider
+
+        return CohereRerankProvider(config or {})
+    raise ValueError(f"未知 Rerank Provider: {ptype}")

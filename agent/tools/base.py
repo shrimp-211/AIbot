@@ -49,6 +49,8 @@ class Tool(ABC):
     description: str = ""
     parameters: dict[str, Any] = {"type": "object", "properties": {}}
     permission_level: int = 0  # 0=所有人 1=信任 7=管理员
+    # 依赖的模型模态(image/audio/video);支持该模态的模型才注册此工具
+    requires_modal: str | None = None
 
     def __init__(self, auth: AuthManager | None = None):
         self._auth = auth
@@ -57,11 +59,14 @@ class Tool(ABC):
         self._auth = auth
 
     def to_openai_schema(self) -> dict[str, Any]:
-        return {
+        schema = {
             "name": self.name,
             "description": self.description,
             "parameters": self.parameters,
         }
+        if self.requires_modal:
+            schema["x_modal"] = self.requires_modal
+        return schema
 
     def check_permission(self, role_level: int) -> Decision:
         if role_level < self.permission_level:

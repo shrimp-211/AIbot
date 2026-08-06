@@ -23,6 +23,7 @@ from .agent.mcp import MCPManager
 from .agent.memory.files import FileMemoryStore
 from .agent.memory.sqlite_store import SQLiteStore
 from .agent.memory.store import MemoryStore
+from .agent.perception import PerceptionManager
 from .agent.persona import PersonaManager
 from .agent.proactive import CronManager
 from .agent.skills import SkillRegistry
@@ -43,7 +44,14 @@ from .pipeline.stages import (
     WakeCheckStage,
 )
 from .plugins.registry import PluginRegistry
-from .providers.base import create_provider
+from .providers.base import (
+    create_embedding_provider,
+    create_provider,
+    create_rerank_provider,
+    create_stt_provider,
+    create_tts_provider,
+)
+from .providers.modalities import MODALITY_IMAGE
 from .security.audit import AuditLogger
 from .security.auth import AuthManager
 from .storage.db import JsonKV
@@ -425,6 +433,57 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     provider = create_provider(provider_cfg)
     logger.info(f"LLM Provider: {type(provider).__name__} | 模型: {provider_cfg.get('model', '')}")
 
+    # 多模态感知层(参照 AstrBot):STT/TTS/Embedding/Rerank Provider + PerceptionManager
+    def _maybe_provider(factory: Callable, cfg: dict) -> Any:
+        if not cfg or cfg.get("type") in (None, "", "none", "disabled"):
+            return None
+        try:
+            return factory(cfg)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("{} Provider 初始化失败: {}", factory.__name__, exc)
+            return None
+
+    stt_provider = _maybe_provider(create_stt_provider, config.get("provider_stt", {}))
+    tts_provider = _maybe_provider(create_tts_provider, config.get("provider_tts", {}))
+    embedding_provider = _maybe_provider(
+        create_embedding_provider, config.get("provider_embedding", {})
+    )
+    rerank_provider = _maybe_provider(create_rerank_provider, config.get("provider_rerank", {}))
+    for p, label in (
+        (stt_provider, "STT"), (tts_provider, "TTS"),
+        (embedding_provider, "Embedding"), (rerank_provider, "Rerank"),
+    ):
+        if p is not None:
+            logger.info("{} Provider: {}", label, type(p).__name__)
+
+    async def _vision_analyzer(image_path: str, question: str) -> str:
+        """多模态视觉问答:图片 → base64 → 主 LLM Provider 分析(同步读文件走 to_thread)。"""
+        import base64
+        import mimetypes
+
+        def _read() -> tuple[str, str]:
+            mime = mimetypes.guess_type(image_path)[0] or "image/jpeg"
+            with open(image_path, "rb") as f:
+                return mime, base64.b64encode(f.read()).decode()
+
+        mime, b64 = await asyncio.to_thread(_read)
+        if type(provider).__name__ == "AnthropicProvider":
+            blocks: list[dict] = [
+                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
+            ]
+        else:
+            blocks = [{"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}]
+        if question:
+            blocks.append({"type": "text", "text": question})
+        result = await provider.chat(messages=[{"role": "user", "content": blocks}])
+        return (result.get("content") or "").strip()
+
+    perception = PerceptionManager(
+        stt_provider=stt_provider,
+        # 主模型声明图像能力才注入视觉分析回调,否则感知器返回明确的能力缺失提示
+        llm_analyzer=_vision_analyzer if MODALITY_IMAGE in provider.modalities else None,
+    )
+
     # 记忆 / 人格 / 钩子 / 定时任务 / 技能
     memory = MemoryStore(db)
     sqlite_store = SQLiteStore(ROOT_DIR / "data" / "memory.sqlite3")
@@ -454,6 +513,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         mcp_manager=mcp_manager,
         audit_logger=audit_logger,
         usage_tracker=usage,
+        perception=perception,
     )
 
     # 插件注册中心

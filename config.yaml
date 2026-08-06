@@ -86,6 +86,30 @@ search:
   tavily_key: ${TAVILY_API_KEY:-}
   brave_key: ${BRAVE_API_KEY:-}
 
+# ---------- 多模态感知 Provider(STT/TTS/Embedding/Rerank) ----------
+# 供图片理解/语音转写/语音合成/向量检索使用;type: none 表示禁用
+provider_stt:
+  type: whisper            # whisper(OpenAI API) | faster-whisper(本地,backend: local)
+  api_key: ${WHISPER_API_KEY:-}
+  base_url: ""             # OpenAI 兼容转写地址,默认 https://api.openai.com/v1
+  model: whisper-1         # 本地模式建议 model: small
+  # backend: api           # api(默认) | local(faster-whisper,无需 Key)
+
+provider_tts:
+  type: edge               # edge(微软免费语音,无需 Key)
+  voice: zh-CN-XiaoxiaoNeural  # 其他: zh-CN-YunxiNeural(男声) 等,见 edge-tts voices
+
+provider_embedding:
+  type: none               # openai | none(禁用;本地 sentence-transformers 见 Iteration 2)
+  api_key: ${LLM_API_KEY:-}
+  base_url: ""
+  model: text-embedding-3-small
+
+provider_rerank:
+  type: none               # none(禁用) | cohere
+  api_key: ${COHERE_API_KEY:-}
+  model: rerank-multilingual-v3.0
+
 # ---------- MCP(Model Context Protocol)外部工具 ----------
 # 每个服务器: name/command/args/env/permission_level
 # 示例: 接入 GitHub 官方 MCP 服务器
