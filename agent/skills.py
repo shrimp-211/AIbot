@@ -51,6 +51,20 @@ class Skill:
         }
 
 
+# plan_only 技能 / 只读阶段的工具集(参考 Claude Code plan 模式只读工具)
+_READONLY_TOOLS = [
+    "web_search",
+    "web_fetch",
+    "file_read",
+    "glob",
+    "grep",
+    "memory_search",
+    "knowledge_search",
+    "task",
+    "plan",
+]
+
+
 def parse_skill_file(path: Path) -> Skill | None:
     """解析单个 SKILL.md 文件,失败返回 None。"""
     try:
@@ -197,10 +211,15 @@ class SkillRegistry:
         return best if best_score >= 2 else None
 
     def tool_filter(self, session_id: str) -> list[str] | None:
-        """返回当前激活技能的只读工具白名单(None=不限制)。"""
+        """返回当前激活技能的工具白名单(None=不限制)。
+
+        plan_only 技能强制收敛到只读工具集,防止规划阶段产生副作用。
+        """
         skill = self.active(session_id)
         if skill is None:
             return None
+        if skill.plan_only:
+            return list(_READONLY_TOOLS)
         if skill.tools is not None and skill.tools == []:
             return []
         return skill.tools

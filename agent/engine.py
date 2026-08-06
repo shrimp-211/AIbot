@@ -277,8 +277,20 @@ class AgentEngine:
     # ---------- Prompt 构建 ----------
 
     def _filtered_schemas(self, session_id: str) -> list[dict[str, Any]]:
-        """根据激活技能的工具白名单过滤工具 schema(未激活返回全部)。"""
+        """按技能白名单 / 人格白名单 / plan_only 只读门禁过滤工具 schema。
+
+        技能与人格白名单都非空时取交集;plan_only 已由 skills.tool_filter 收敛为只读集。
+        """
         allowlist = self.skills.tool_filter(session_id) if self.skills else None
+        persona_allow = (
+            self.persona_manager.get_tool_allowlist(session_id)
+            if self.persona_manager
+            else None
+        )
+        if allowlist is not None and persona_allow is not None:
+            allowlist = [n for n in allowlist if n in persona_allow]
+        elif allowlist is None:
+            allowlist = persona_allow
         if allowlist is None:
             return self.tools.schemas()
         return [s for s in self.tools.schemas() if s["name"] in allowlist]

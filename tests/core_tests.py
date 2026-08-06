@@ -708,6 +708,58 @@ async def test_persona_switch_prune():
         assert "stale" not in pm._session_personas
 
 
+async def test_engine_filtered_schemas():
+    """engine._filtered_schemas: persona 白名单 / 技能白名单交集 / plan_only 只读门禁。"""
+    from src.agent.engine import AgentEngine
+    from src.agent.skills import Skill, SkillRegistry
+
+    class FakeTools:
+        def schemas(self):
+            return [
+                {"name": "web_search", "description": ""},
+                {"name": "file_read", "description": ""},
+                {"name": "bash", "description": ""},
+            ]
+
+    class FakePersona:
+        def get_tool_allowlist(self, sid):
+            return ["web_search", "file_read"] if sid == "restricted" else None
+
+    sr = SkillRegistry()
+    engine = AgentEngine(
+        provider=object(),
+        tools=FakeTools(),
+        memory=object(),
+        auth=object(),
+        config=object(),
+        adapter=object(),
+        db=object(),
+        persona_manager=FakePersona(),
+        subagent_manager=object(),
+        skills=sr,
+    )
+    # 无激活技能:persona 白名单生效
+    assert [s["name"] for s in engine._filtered_schemas("restricted")] == [
+        "web_search",
+        "file_read",
+    ]
+    # 无 persona 限制:全部工具
+    assert [s["name"] for s in engine._filtered_schemas("open")] == [
+        "web_search",
+        "file_read",
+        "bash",
+    ]
+    # plan_only 技能:收敛到只读集
+    sr._skills["plan"] = Skill(name="plan", description="", tools=None, plan_only=True)
+    sr.activate("s2", "plan")
+    assert [s["name"] for s in engine._filtered_schemas("s2")] == ["web_search", "file_read"]
+    # 技能白名单 ∩ persona 白名单
+    sr.deactivate("s2")
+    sr._skills["web"] = Skill(name="web", description="", tools=["web_search", "bash"])
+    sr.activate("restricted", "web")
+    assert [s["name"] for s in engine._filtered_schemas("restricted")] == ["web_search"]
+
+
 async def run_all() -> bool:
     tests = [
         v
