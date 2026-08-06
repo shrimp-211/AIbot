@@ -20,12 +20,12 @@ from aiohttp import web
 from loguru import logger
 
 from .base import BaseAdapter
-from .driver import ReverseDriver
+from .driver import ReverseDriver, ReverseServerMixin
 from .event import AgentEvent
 from .message import MessageChain
 
 
-class QQOfficialAdapter(BaseAdapter):
+class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
     platform = "qq_official"
 
     _token_cache: dict[str, tuple[str, float]] = {}
@@ -42,46 +42,26 @@ class QQOfficialAdapter(BaseAdapter):
         api_base: str = "https://api.sgroup.qq.com",
         driver: ReverseDriver | None = None,
     ):
-        self.host = host
-        self.port = port
-        self.path = path
+        self.token = ""  # 官方 webhook 用 sign_secret 验签,mixin 的 bearer token 不需要
         self.app_id = app_id
         self.app_secret = app_secret
         self.sign_secret = sign_secret
         self.api_base = api_base.rstrip("/")
-
-        self._driver = driver
-        self._app: web.Application | None = None
-        self._runner: web.AppRunner | None = None
-        self._site: web.TCPSite | None = None
-        if driver is not None:
-            driver.register_http(path, self._webhook_handler)
-        else:
-            self._app = web.Application()
-            self._app.router.add_post(path, self._webhook_handler)
-            self._runner = web.AppRunner(self._app)
+        self._init_server(host, port, path, driver)
         self._session: aiohttp.ClientSession | None = None
 
+    def _register_driver_route(self, driver: ReverseDriver, path: str) -> None:
+        driver.register_http(path, self._webhook_handler, method="POST")
+
+    def _register_routes(self, app: web.Application) -> None:
+        app.router.add_post(self.path, self._webhook_handler)
+
     async def start(self) -> None:
-        if self._driver is not None:
-            logger.info(
-                f"QQ 官方 Webhook 路由已挂载: http://{self._driver.host}:{self._driver.port}{self.path}"
-            )
-            self._session = aiohttp.ClientSession()
-            return
-        await self._runner.setup()
-        self._site = web.TCPSite(self._runner, self.host, self.port)
-        await self._site.start()
+        await self._start_server("QQ 官方 Webhook")
         self._session = aiohttp.ClientSession()
-        logger.info(
-            f"QQ 官方 Webhook 接收: http://{self.host}:{self.port}{self.path}"
-        )
 
     async def stop(self) -> None:
-        if self._driver is None:
-            if self._site is not None:
-                await self._site.stop()
-            await self._runner.cleanup()
+        await self._stop_server()
         if self._session is not None:
             await self._session.close()
             self._session = None

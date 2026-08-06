@@ -114,7 +114,7 @@ class Subagent:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001
-                    logger.exception("子代理工具 %s 执行异常", name)
+                    logger.exception("子代理工具 {} 执行异常", name)
                     output = f"工具执行错误: {type(exc).__name__}: {exc}"
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "content": output[:4000]})
         return "子代理已达到迭代上限,基于已获得的信息给出结论。"
@@ -180,7 +180,7 @@ class SubagentManager:
         except asyncio.CancelledError:
             self._results[job_id] = {"status": "cancelled"}
         except Exception as exc:  # noqa: BLE001
-            logger.exception("子代理 %s 执行异常", job_id)
+            logger.exception("子代理 {} 执行异常", job_id)
             self._results[job_id] = {"status": "error", "error": str(exc)}
         finally:
             self._jobs.pop(job_id, None)

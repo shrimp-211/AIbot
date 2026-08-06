@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from loguru import logger
+
 from src.adapter import AdapterRegistry, BaseAdapter, OneBotV11Adapter, ReverseDriver
 from src.utils.config import Config
 
@@ -16,6 +18,15 @@ def register(
 ) -> BaseAdapter | None:
     """注册 OneBot v11 反向 WS 适配器并返回实例;禁用返回 None。"""
     cfg = config.get("onebot", {})
+    if driver is not None:
+        # 共享驱动模式:监听地址以 driver 配置为准,onebot.host/port 被忽略
+        cfg_host = str(cfg.get("host", "127.0.0.1"))
+        cfg_port = int(cfg.get("port", 6199))
+        if cfg_host != driver.host or cfg_port != driver.port:
+            logger.warning(
+                f"onebot.host/port({cfg_host}:{cfg_port}) 在 driver 共享模式下被忽略,"
+                f"实际监听 driver.host/port({driver.host}:{driver.port})"
+            )
     adapter = OneBotV11Adapter(
         host=cfg.get("host", "127.0.0.1"),
         port=int(cfg.get("port", 6199)),

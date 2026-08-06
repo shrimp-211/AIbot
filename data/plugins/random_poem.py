@@ -12,6 +12,7 @@ import random
 import aiohttp
 
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 
 _API = "https://v1.jinrishici.com/one.json"
 _LOCAL_POEMS = [
@@ -28,16 +29,21 @@ _LOCAL_POEMS = [
 ]
 
 
+_session: aiohttp.ClientSession | None = None
+
+
 def _local() -> str:
     line, src = random.choice(_LOCAL_POEMS)
     return f"{line}\n—— {src}"
 
 
 async def _fetch() -> str | None:
+    global _session
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(_API, timeout=10) as resp:
-                data = await resp.json(content_type=None)
+        if _session is None:
+            _session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
+        async with _session.get(_API) as resp:
+            data = await resp.json(content_type=None)
         if data.get("status") == "success" and data.get("content"):
             origin = data.get("origin", "")
             author = data.get("author", "")
@@ -52,11 +58,11 @@ def setup(registry) -> None:
     @registry.command("诗词", permission_level=1)
     async def poem(event: AgentEvent):
         text = await _fetch() or _local()
-        await event.reply(f"📜 {text}")
+        await event.reply(f"📜 {escape_cq(text)}")
         return None
 
     @registry.command("诗词更多", permission_level=1)
     async def poem_more(event: AgentEvent):
-        lines = [_local() for _ in range(3)]
+        lines = [escape_cq(_local()) for _ in range(3)]
         await event.reply("📜 随机三句:\n" + "\n\n".join(lines))
         return None

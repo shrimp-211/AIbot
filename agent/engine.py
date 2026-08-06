@@ -154,7 +154,7 @@ class AgentEngine:
             summary = (result.get("content") or "").strip()
             if summary:
                 self.memory.record_reflection(event.user_id, summary)
-                logger.info("已完成一次用户自我反思(%s)", event.user_id)
+                logger.info("已完成一次用户自我反思({})", event.user_id)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001

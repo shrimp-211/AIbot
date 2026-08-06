@@ -14,6 +14,7 @@ import math
 import operator
 
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 
 _MAX_LEN = 200
 _MAX_EXPONENT = 64
@@ -102,7 +103,7 @@ def _safe_calc(expr: str) -> str:
         result = int(result)
     if isinstance(result, float):
         result = round(result, 10)
-    return f"{expr} = {result}"
+    return f"{escape_cq(expr)} = {result}"
 
 
 def setup(registry) -> None:

@@ -120,8 +120,15 @@ class AuthManager:
     # ---------- 配对审批(OpenClaw pairing) ----------
 
     def request_pairing(self, user_id: str, group_id: str | None = None) -> str:
-        """为未配对用户生成审批码,返回审批码。"""
+        """为未配对用户生成审批码,返回审批码。
+
+        已有未过期审批码则复用(单用户最多 1 个待审批码,天然限流,
+        避免刷码占用 pending 表)。
+        """
         self._expire_approvals()
+        for code, r in self.pending_approvals.items():
+            if r["user_id"] == user_id:
+                return code
         code = uuid.uuid4().hex[:6].upper()
         self.pending_approvals[code] = {
             "user_id": user_id,

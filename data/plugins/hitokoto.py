@@ -11,6 +11,7 @@ import random
 import aiohttp
 
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 
 _ENDPOINT = "https://v1.hitokoto.cn/?c=k&c=i&c=a&c=h"
 
@@ -25,23 +26,27 @@ _FALLBACK = [
 ]
 
 
+_session: aiohttp.ClientSession | None = None
+
+
 def setup(registry) -> None:
     @registry.command("一言")
     async def hitokoto(event: AgentEvent):
+        global _session
         try:
-            timeout = aiohttp.ClientTimeout(total=8)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(_ENDPOINT) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        text = data.get("hitokoto", "")
-                        if text:
-                            source = data.get("from", "")
-                            reply = f"「{text}」" if text else ""
-                            if source:
-                                reply += f" —— {source}"
-                            await event.reply(reply)
-                            return None
+            if _session is None:
+                _session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8))
+            async with _session.get(_ENDPOINT) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    text = data.get("hitokoto", "")
+                    if text:
+                        source = data.get("from", "")
+                        reply = f"「{escape_cq(text)}」"
+                        if source:
+                            reply += f" —— {escape_cq(source)}"
+                        await event.reply(reply)
+                        return None
         except (aiohttp.ClientError, asyncio.TimeoutError):
             pass
         await event.reply(random.choice(_FALLBACK))

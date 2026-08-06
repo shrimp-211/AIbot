@@ -15,6 +15,7 @@ from typing import Callable
 from loguru import logger
 
 from .adapter import AdapterRegistry, AgentEvent, BaseAdapter, ReverseDriver
+from .adapter.message import escape_cq
 from .agent.engine import AgentEngine
 from .agent.hooks import HookManager
 from .agent.mcp import MCPManager
@@ -76,6 +77,8 @@ def load_adapters(
     import importlib.util
     import sys
 
+    import hashlib
+
     loaded: list[tuple[str, BaseAdapter]] = []
     for directory in _adapter_dirs():
         if not directory.is_dir():
@@ -83,12 +86,14 @@ def load_adapters(
         for path in sorted(directory.glob("*.py")):
             if path.name.startswith("_"):
                 continue
-            module_name = f"qqbot_adapter_{path.stem}"
+            # 以路径哈希保证模块名唯一,避免不同目录同名文件互相覆盖
+            digest = hashlib.sha1(str(path.resolve()).encode()).hexdigest()[:8]
+            module_name = f"qqbot_adapter_{path.stem}_{digest}"
             sys.modules.pop(module_name, None)  # 清理缓存以支持热加载
             try:
                 spec = importlib.util.spec_from_file_location(module_name, path)
                 if spec is None or spec.loader is None:
-                    logger.warning("适配器插件无法解析: %s", path.name)
+                    logger.warning("适配器插件无法解析: {}", path.name)
                     continue
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[module_name] = module
@@ -101,7 +106,7 @@ def load_adapters(
                 if adapter is not None:
                     loaded.append((path.stem, adapter))
             except Exception:  # noqa: BLE001
-                logger.exception("适配器插件加载失败: %s", path.name)
+                logger.exception("适配器插件加载失败: {}", path.name)
     return loaded
 
 
@@ -117,7 +122,7 @@ def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: Aut
     async def echo(event: AgentEvent):
         arg = event.state.get("command_arg", "")
         if arg:
-            await event.reply(arg)
+            await event.reply(escape_cq(arg))
         return None
 
     @registry.command("whoami", permission_level=1)
@@ -322,6 +327,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
             path=config.get("onebot.path", "/ws"),
             token=config.get("onebot.token", ""),
             self_id=config.get("onebot.self_id", ""),
+            driver=driver,
         )
         adapter_registry.register("qq", main_adapter)
 

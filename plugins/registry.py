@@ -171,7 +171,7 @@ class PluginRegistry:
     def llm(self, description: str, priority: int = 50, block: bool = True, permission_level: int = 0):
         """自然语言意图插件:description 描述该插件处理的请求类型。
 
-        匹配规则:消息文本命中描述中 >=2 个关键词时触发。
+        匹配规则:消息文本命中任一描述关键词即触发(关键词由 _extract_keywords 提取)。
         """
         keywords = _extract_keywords(description)
 
@@ -206,7 +206,8 @@ class PluginRegistry:
         role_level = (
             self._auth.get_role_level(event.user_id, event.group_id) if self._auth else 7
         )
-        for h in self._handlers:
+        # 快照迭代:防止 handler 执行期间注册新 handler 导致修改迭代中的列表
+        for h in list(self._handlers):
             if not h.match(event):
                 continue
             if role_level < h.permission_level:

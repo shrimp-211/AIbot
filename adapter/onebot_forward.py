@@ -77,7 +77,7 @@ class OneBotV11Client(BaseAdapter):
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
-                logger.warning("正向 WS 连接失败,%.0fs 后重试: %s", self._reconnect_interval, self.url)
+                logger.warning("正向 WS 连接失败,{:.0f}s 后重试: {}", self._reconnect_interval, self.url)
             if self._running:
                 await asyncio.sleep(self._reconnect_interval)
 

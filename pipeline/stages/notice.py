@@ -120,7 +120,7 @@ class NoticeStage(Stage):
                 return
             approve = policy == "accept"
             await adapter.set_friend_add_request(event.flag, approve=approve)
-            logger.info("好友请求 %s: user=%s", "通过" if approve else "拒绝", event.user_id)
+            logger.info("好友请求 {}: user={}", "通过" if approve else "拒绝", event.user_id)
         elif event.notice_type == "group":
             policy = self._cfg("group_requests", "accept")
             if policy == "ignore":

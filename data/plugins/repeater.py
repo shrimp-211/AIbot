@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 from src.storage.db import JsonKV
 
 _KEY = "plugin:repeater"
@@ -23,16 +24,18 @@ def setup(registry) -> None:
             return None  # 命令不复读
         store = db.get(_KEY) or {}
         cur = store.get(event.group_id) or {"count": 0, "text": ""}
-        if cur.get("text") == text:
-            cur["count"] += 1
-        else:
+        if cur.get("text") != text:
+            # 新消息:重置计数并写盘
             cur = {"count": 1, "text": text}
-        if cur["count"] < 3:
             store[event.group_id] = cur
             db.set(_KEY, store)
+            return None
+        cur["count"] += 1
+        if cur["count"] < 3:
+            # 第 2 次相同:不写盘,降低写入放大(崩溃仅回退一次计数)
             return None
         cur["count"] = 0  # 复读后归零,避免持续刷屏
         store[event.group_id] = cur
         db.set(_KEY, store)
-        await event.reply(text)
+        await event.reply(escape_cq(text))
         return True

@@ -19,12 +19,15 @@ class PluginStage(Stage):
     def __init__(self, registry: "PluginRegistry | None", config: Config):
         self._registry = registry
         self._config = config
+        # 命令前缀在启动时固定,缓存避免每条消息重复嵌套查询配置
+        self._prefixes: tuple[str, ...] = tuple(
+            config.get("pipeline.command_prefixes", ["!", "/"])
+        )
 
     async def process(self, event: AgentEvent) -> None:
         # 命令前缀标记(供插件与唤醒检测复用)
-        cmd_prefixes = self._config.get("pipeline.command_prefixes", ["!", "/"])
         text = event.plain_text.strip()
-        event.is_plain_command = text.startswith(tuple(cmd_prefixes))
+        event.is_plain_command = text.startswith(self._prefixes)
 
         if self._registry is None:
             return

@@ -17,12 +17,12 @@ from aiohttp import web
 from loguru import logger
 
 from .base import BaseAdapter
-from .driver import ReverseDriver
+from .driver import ReverseDriver, ReverseServerMixin
 from .event import AgentEvent
 from .message import MessageChain
 
 
-class OneBotV11Http(BaseAdapter):
+class OneBotV11Http(ReverseServerMixin, BaseAdapter):
     platform = "qq"
 
     def __init__(
@@ -35,47 +35,25 @@ class OneBotV11Http(BaseAdapter):
         self_id: str = "",
         driver: ReverseDriver | None = None,
     ):
-        self.host = host
-        self.port = port
-        self.path = path
         self.http_url = http_url.rstrip("/")
         self.token = token
         self.self_id = self_id
-
-        self._driver = driver
-        self._app: web.Application | None = None
-        self._runner: web.AppRunner | None = None
-        self._site: web.TCPSite | None = None
-        if driver is not None:
-            driver.register_http(path, self._webhook_handler)
-        else:
-            self._app = web.Application()
-            self._app.router.add_post(path, self._webhook_handler)
-            self._runner = web.AppRunner(self._app)
+        self._init_server(host, port, path, driver)
         self._session: aiohttp.ClientSession | None = None
 
+    def _register_driver_route(self, driver: ReverseDriver, path: str) -> None:
+        driver.register_http(path, self._webhook_handler, method="POST")
+
+    def _register_routes(self, app: web.Application) -> None:
+        app.router.add_post(self.path, self._webhook_handler)
+
     async def start(self) -> None:
-        if self._driver is not None:
-            logger.info(
-                f"OneBot v11 HTTP 路由已挂载: http://{self._driver.host}:{self._driver.port}{self.path} "
-                f"| API: {self.http_url}"
-            )
-            self._session = aiohttp.ClientSession()
-            return
-        await self._runner.setup()
-        self._site = web.TCPSite(self._runner, self.host, self.port)
-        await self._site.start()
+        await self._start_server("OneBot v11 HTTP")
         self._session = aiohttp.ClientSession()
-        logger.info(
-            f"OneBot v11 HTTP 上报接收: http://{self.host}:{self.port}{self.path} "
-            f"| API: {self.http_url}"
-        )
+        logger.info(f"OneBot v11 HTTP API 端点: {self.http_url}")
 
     async def stop(self) -> None:
-        if self._driver is None:
-            if self._site is not None:
-                await self._site.stop()
-            await self._runner.cleanup()
+        await self._stop_server()
         if self._session is not None:
             await self._session.close()
             self._session = None
@@ -84,10 +62,8 @@ class OneBotV11Http(BaseAdapter):
     # ---------- 事件上报接收 ----------
 
     async def _webhook_handler(self, request: web.Request) -> web.Response:
-        if self.token:
-            auth = request.headers.get("Authorization", "")
-            if auth != f"Bearer {self.token}":
-                return web.Response(status=401, text="Unauthorized")
+        if not self._authorized(request):
+            return web.Response(status=401, text="Unauthorized")
         try:
             data = await request.json()
         except (json.JSONDecodeError, UnicodeDecodeError):
