@@ -2,13 +2,42 @@
 # 支持 ${ENV_VAR} 与 ${ENV_VAR:-default} 环境变量注入
 # 复制为 config.local.yaml 可本地覆盖(该文件已被 gitignore)
 
-# ---------- OneBot v11 连接 ----------
+# ---------- 适配器 ----------
+# 默认启用反向 WebSocket(服务端)模式,其余模式按需开启
 onebot:
   host: 127.0.0.1          # 监听地址
   port: 6199               # 监听端口(NapCat/Lagrange/go-cqhttp 在此反向连接)
   path: /ws                # WebSocket 路径
   token: ""                # Access Token(与 OneBot 客户端保持一致)
   self_id: ""              # 机器人 QQ 号,用于 @ 检测
+
+# 可选:正向 WebSocket(客户端)模式 —— 机器人主动连接 OneBot 实现端
+# 适合内网/容器部署(无法被反向连入时),断线自动重连
+onebot_forward:
+  enabled: false
+  url: ws://127.0.0.1:6700 # OneBot 实现端的 WS 服务端地址
+  token: ""
+  self_id: ""
+
+# 可选:HTTP 上报模式 —— webhook 接收事件 + HTTP API 调用
+onebot_http:
+  enabled: false
+  host: 127.0.0.1
+  port: 6198
+  path: /onebot            # 上报接收路径
+  http_url: http://127.0.0.1:5700  # OneBot 实现端 HTTP API 地址
+  token: ""
+  self_id: ""
+
+# 可选:QQ 官方开放平台 Webhook(需官方机器人凭据)
+qq_official:
+  enabled: false
+  host: 127.0.0.1
+  port: 6197
+  path: /qq-official
+  app_id: ""
+  app_secret: ""
+  sign_secret: ""
 
 # ---------- LLM Provider ----------
 llm:

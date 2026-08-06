@@ -13,8 +13,14 @@ from pathlib import Path
 
 from loguru import logger
 
-from .adapter.event import AgentEvent
-from .adapter.onebot_v11 import OneBotV11Adapter
+from .adapter import (
+    AdapterRegistry,
+    AgentEvent,
+    OneBotV11Adapter,
+    OneBotV11Client,
+    OneBotV11Http,
+    QQOfficialAdapter,
+)
 from .agent.engine import AgentEngine
 from .agent.hooks import HookManager
 from .agent.memory.store import MemoryStore
@@ -43,25 +49,6 @@ from .webui.server import WebUIServer
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BASE_DIR.parent
 DEFAULT_CONFIG = BASE_DIR / "config.yaml"
-
-
-def make_send_reply(adapter: OneBotV11Adapter):
-    """构建 event.reply 的发送回调。"""
-
-    async def send_reply(event: AgentEvent, text: str, at: bool = False) -> None:
-        if not text:
-            return
-        content = (
-            f"[CQ:at,qq={event.user_id}] {text}"
-            if at and event.message_type == "group"
-            else text
-        )
-        if event.message_type == "group" and event.group_id:
-            await adapter.send_group_msg(event.group_id, content)
-        else:
-            await adapter.send_private_msg(event.user_id, content)
-
-    return send_reply
 
 
 def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: AuthManager) -> None:
@@ -164,24 +151,62 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     # 管道
     pipeline = build_pipeline(config, auth, plugin_registry, engine)
 
-    # OneBot 适配器
-    adapter = OneBotV11Adapter(
+    # 适配器(多模式/多连接,统一注册到 AdapterRegistry)
+    adapter_registry = AdapterRegistry()
+    adapter_registry.set_callback(pipeline.execute)
+
+    main_adapter = OneBotV11Adapter(
         host=config.get("onebot.host", "127.0.0.1"),
         port=int(config.get("onebot.port", 6199)),
         path=config.get("onebot.path", "/ws"),
         token=config.get("onebot.token", ""),
         self_id=config.get("onebot.self_id", ""),
     )
-    adapter.on_event = pipeline.execute
-    adapter.send_callback = make_send_reply(adapter)
+    adapter_registry.register("qq", main_adapter)
 
-    # 回填 adapter
-    engine.adapter = adapter
-    cron._adapter = adapter
+    if config.get("onebot_forward.enabled", False):
+        adapter_registry.register(
+            "qq_forward",
+            OneBotV11Client(
+                url=config.get("onebot_forward.url", ""),
+                token=config.get("onebot_forward.token", ""),
+                self_id=config.get("onebot_forward.self_id", ""),
+            ),
+        )
+
+    if config.get("onebot_http.enabled", False):
+        adapter_registry.register(
+            "qq_http",
+            OneBotV11Http(
+                host=config.get("onebot_http.host", "127.0.0.1"),
+                port=int(config.get("onebot_http.port", 6198)),
+                path=config.get("onebot_http.path", "/onebot"),
+                http_url=config.get("onebot_http.http_url", ""),
+                token=config.get("onebot_http.token", ""),
+                self_id=config.get("onebot_http.self_id", ""),
+            ),
+        )
+
+    if config.get("qq_official.enabled", False):
+        adapter_registry.register(
+            "qq_official",
+            QQOfficialAdapter(
+                host=config.get("qq_official.host", "127.0.0.1"),
+                port=int(config.get("qq_official.port", 6197)),
+                path=config.get("qq_official.path", "/qq-official"),
+                app_id=config.get("qq_official.app_id", ""),
+                app_secret=config.get("qq_official.app_secret", ""),
+                sign_secret=config.get("qq_official.sign_secret", ""),
+            ),
+        )
+
+    # 回填 adapter:主 QQ 适配器作为默认发送通道
+    engine.adapter = main_adapter
+    cron._adapter = main_adapter
 
     # 启动服务
     await cron.start()
-    await adapter.start()
+    await adapter_registry.start_all()
 
     webui: WebUIServer | None = None
     if config.get("webui.enabled", True):
@@ -211,7 +236,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     logger.info("收到停止信号,正在关闭...")
 
     # 关闭
-    await adapter.stop()
+    await adapter_registry.stop_all()
     await cron.stop()
     if webui is not None:
         await webui.stop()

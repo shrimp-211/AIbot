@@ -1,0 +1,216 @@
+"""QQ 官方开放平台 Webhook 适配器。
+
+接收 QQ 官方机器人的事件上报(HTTP POST webhook),转换成 AgentEvent;
+发送走 QQ 官方 OpenAPI(`/v2/groups|/c2c/.../messages`)。
+
+需要配置官方凭据(app_id / app_secret),sign_secret 用于请求验签。
+事件上报格式与 OneBot v11 高度相似(message 数组),因此转换逻辑复用。
+"""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import hmac
+import json
+import time
+from typing import Any
+
+import aiohttp
+from aiohttp import web
+from loguru import logger
+
+from .base import BaseAdapter
+from .event import AgentEvent
+from .message import MessageChain
+
+
+class QQOfficialAdapter(BaseAdapter):
+    platform = "qq_official"
+
+    _token_cache: dict[str, tuple[str, float]] = {}
+    _token_ttl = 7200  # 官方 access_token 有效期(秒)
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 6197,
+        path: str = "/qq-official",
+        app_id: str = "",
+        app_secret: str = "",
+        sign_secret: str = "",
+        api_base: str = "https://api.sgroup.qq.com",
+    ):
+        self.host = host
+        self.port = port
+        self.path = path
+        self.app_id = app_id
+        self.app_secret = app_secret
+        self.sign_secret = sign_secret
+        self.api_base = api_base.rstrip("/")
+
+        self._app = web.Application()
+        self._app.router.add_post(path, self._webhook_handler)
+        self._runner = web.AppRunner(self._app)
+        self._site: web.TCPSite | None = None
+        self._session: aiohttp.ClientSession | None = None
+
+    async def start(self) -> None:
+        await self._runner.setup()
+        self._site = web.TCPSite(self._runner, self.host, self.port)
+        await self._site.start()
+        self._session = aiohttp.ClientSession()
+        logger.info(
+            f"QQ 官方 Webhook 接收: http://{self.host}:{self.port}{self.path}"
+        )
+
+    async def stop(self) -> None:
+        if self._site is not None:
+            await self._site.stop()
+        await self._runner.cleanup()
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+        logger.info("QQ 官方适配器已停止")
+
+    # ---------- 签名验证 ----------
+
+    def _verify_signature(self, request: web.Request, body: bytes) -> bool:
+        """验证 QQ 官方 webhook 签名(需配置 sign_secret;为空则跳过)。"""
+        if not self.sign_secret:
+            return True
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("sha256="):
+            logger.warning("QQ 官方 webhook 缺少 sha256 签名头")
+            return False
+        timestamp = request.headers.get("X-Timestamp", "")
+        nonce = request.headers.get("X-Nonce", "")
+        calc = hashlib.sha256(
+            (self.sign_secret + timestamp + nonce + body.decode("utf-8", "ignore")).encode()
+        ).hexdigest()
+        return hmac.compare_digest(calc, auth[len("sha256=") :])
+
+    # ---------- 事件接收 ----------
+
+    async def _webhook_handler(self, request: web.Request) -> web.Response:
+        body = await request.read()
+        if not self._verify_signature(request, body):
+            return web.Response(status=401, text="Invalid signature")
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError:
+            return web.Response(status=400, text="Invalid JSON")
+        asyncio.create_task(self._dispatch_frame(data))
+        # QQ 官方要求收到后立即返回成功响应
+        return web.Response(status=200, text="success")
+
+    async def _dispatch_frame(self, data: dict[str, Any]) -> None:
+        try:
+            if data.get("post_type") == "message" and self.on_event is not None:
+                event = self._build_event(data)
+                await self.on_event(event)
+        except Exception:  # noqa: BLE001
+            logger.exception("QQ 官方事件处理异常")
+
+    def _build_event(self, data: dict[str, Any]) -> AgentEvent:
+        mtype = data.get("message_type", "group")
+        user_id = str(data.get("user_id", ""))
+        group_id = str(data.get("group_id", "")) if data.get("group_id") else None
+        sender = data.get("sender") or {}
+        message = data.get("message", [])
+        self_id = str(data.get("app_id", self.app_id))
+
+        if isinstance(message, str):
+            chain = MessageChain.from_cq_string(message)
+        else:
+            chain = MessageChain.from_segments(message)
+
+        is_tome = False
+        if mtype == "group":
+            at_qs = [str(s.data.get("qq")) for s in chain.get("at")]
+            is_tome = self_id in at_qs or "all" in at_qs
+
+        session_id = group_id if mtype == "group" else user_id
+        return AgentEvent(
+            platform="qq_official",
+            message_type=mtype,
+            group_id=group_id,
+            user_id=user_id,
+            sender_name=sender.get("nickname", "") or str(user_id),
+            sender_role=sender.get("role", ""),
+            message=chain,
+            raw_message=data.get("raw_message", ""),
+            message_id=data.get("message_id"),
+            session_id=session_id,
+            is_tome=is_tome,
+            _send_callback=self._reply,
+        )
+
+    # ---------- 发送(QQ 官方 OpenAPI) ----------
+
+    async def _get_access_token(self) -> str:
+        """获取/缓存官方 access_token(需 app_id + app_secret)。"""
+        now = time.time()
+        cached = self._token_cache.get(self.app_id)
+        if cached and cached[1] > now + 60:
+            return cached[0]
+        if self._session is None or not (self.app_id and self.app_secret):
+            raise RuntimeError("QQ 官方适配器未配置 app_id/app_secret")
+        async with self._session.get(
+            f"https://bots.qq.com/app/getAppAccessToken",
+            json={
+                "appId": self.app_id,
+                "clientSecret": self.app_secret,
+            },
+            timeout=15,
+        ) as resp:
+            body = await resp.json()
+        token = body.get("access_token", "")
+        if not token:
+            raise RuntimeError(f"获取 QQ 官方 access_token 失败: {body}")
+        ttl = float(body.get("expires_in", self._token_ttl))
+        self._token_cache[self.app_id] = (token, now + ttl)
+        return token
+
+    async def _reply(self, event: AgentEvent, text: str, at: bool = False) -> None:
+        if not text:
+            return
+        if event.message_type == "group" and event.group_id:
+            await self._send_group(event.group_id, text)
+        else:
+            await self._send_private(event.user_id, text)
+
+    async def send_message(self, event: AgentEvent, text: str, at: bool = False) -> Any:
+        return await self._reply(event, text, at=at)
+
+    async def _send_group(self, group_openid: str, text: str) -> Any:
+        token = await self._get_access_token()
+        url = f"{self.api_base}/v2/groups/{group_openid}/messages"
+        payload = {
+            "content": [{"type": "text", "data": {"text": text}}],
+            "msg_type": 0,
+            "msg_seq": int(time.time() % 100000),
+        }
+        headers = {"Authorization": f"QQBot {token}"}
+        async with self._session.post(url, json=payload, headers=headers, timeout=15) as resp:
+            body = await resp.json()
+        if "code" in body and body.get("code") != 0:
+            raise RuntimeError(f"QQ 官方发送失败: {body}")
+        return body
+
+    async def _send_private(self, user_openid: str, text: str) -> Any:
+        token = await self._get_access_token()
+        url = f"{self.api_base}/v2/users/{user_openid}/messages"
+        payload = {
+            "content": [{"type": "text", "data": {"text": text}}],
+            "msg_type": 0,
+            "msg_seq": int(time.time() % 100000),
+        }
+        headers = {"Authorization": f"QQBot {token}"}
+        async with self._session.post(url, json=payload, headers=headers, timeout=15) as resp:
+            body = await resp.json()
+        if "code" in body and body.get("code") != 0:
+            raise RuntimeError(f"QQ 官方发送失败: {body}")
+        return body
+
+    async def call_api(self, action: str, **params: Any) -> Any:
+        raise NotImplementedError("QQ 官方适配器通过 OpenAPI 发送,不提供通用 call_api")

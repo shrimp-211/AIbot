@@ -1,25 +1,29 @@
-"""OneBot v11 协议 WebSocket 适配器(服务端模式)。
+"""OneBot v11 协议 WebSocket 适配器(服务端模式,支持多连接)。
 
 通过 aiohttp 提供 WS 服务端,接收 NapCat / Lagrange / go-cqhttp 等
 OneBot 客户端的连接,实现全双工通信:接收消息事件 + echo 关联的
 异步 API 调用(`call_api` 带 30s 超时)。
+
+支持多个 OneBot 客户端同时连入(如多 QQ 号),API 调用自动路由到
+最近活跃的连接。
 """
 from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from aiohttp import WSMsgType, web
 from loguru import logger
 
+from .base import BaseAdapter
 from .event import AgentEvent
 from .message import MessageChain
 
-EventCallback = Callable[[AgentEvent], Awaitable[None]]
 
+class OneBotV11Adapter(BaseAdapter):
+    platform = "qq"
 
-class OneBotV11Adapter:
     def __init__(
         self,
         host: str = "127.0.0.1",
@@ -27,21 +31,20 @@ class OneBotV11Adapter:
         path: str = "/ws",
         token: str = "",
         self_id: str = "",
-        on_event: EventCallback | None = None,
     ):
         self.host = host
         self.port = port
         self.path = path
         self.token = token
         self.self_id = str(self_id)
-        self.on_event = on_event
-        self.send_callback: EventCallback | None = None
 
         self._app = web.Application()
         self._app.router.add_get(path, self._ws_handler)
         self._runner = web.AppRunner(self._app)
         self._site: web.TCPSite | None = None
-        self._ws: web.WebSocketResponse | None = None
+        # 多连接管理:key = 客户端 self_id(缺省 "default")
+        self._connections: dict[str, web.WebSocketResponse] = {}
+        self._active_ws: web.WebSocketResponse | None = None
         self._echo_waiters: dict[str, asyncio.Future] = {}
         self._seq = 0
         self._lock = asyncio.Lock()
@@ -58,6 +61,8 @@ class OneBotV11Adapter:
         if self._site is not None:
             await self._site.stop()
         await self._runner.cleanup()
+        self._connections.clear()
+        self._active_ws = None
         logger.info("OneBot v11 WS 服务已停止")
 
     # ---------- WebSocket 连接 ----------
@@ -71,9 +76,11 @@ class OneBotV11Adapter:
 
         ws = web.WebSocketResponse(max_msg_size=16 * 1024 * 1024)
         await ws.prepare(request)
+        key = "default"
         async with self._lock:
-            self._ws = ws
-        logger.info("OneBot 客户端已连接")
+            self._connections[key] = ws
+            self._active_ws = ws
+        logger.info(f"OneBot 客户端已连接(连接数: {len(self._connections)})")
 
         try:
             async for msg in ws:
@@ -83,19 +90,23 @@ class OneBotV11Adapter:
                     except json.JSONDecodeError:
                         logger.warning(f"无效 JSON: {msg.data[:200]}")
                         continue
-                    self._on_frame(data)
+                    self._on_frame(data, ws)
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:
             async with self._lock:
-                if self._ws is ws:
-                    self._ws = None
-            logger.info("OneBot 客户端已断开")
+                if self._connections.get(key) is ws:
+                    self._connections.pop(key, None)
+                if self._active_ws is ws:
+                    self._active_ws = next(iter(self._connections.values()), None)
+            logger.info(
+                f"OneBot 客户端已断开(连接数: {len(self._connections)})"
+            )
         return ws
 
     # ---------- 事件分发 ----------
 
-    def _on_frame(self, data: dict[str, Any]) -> None:
+    def _on_frame(self, data: dict[str, Any], ws: web.WebSocketResponse) -> None:
         if "echo" in data and "status" in data:
             echo = str(data.get("echo"))
             fut = self._echo_waiters.pop(echo, None)
@@ -105,10 +116,8 @@ class OneBotV11Adapter:
 
         post_type = data.get("post_type")
         if post_type == "message":
+            self._active_ws = ws
             asyncio.create_task(self._handle_message(data))
-        elif post_type == "meta_event":
-            # heartbeat / lifecycle: 心跳无需处理
-            pass
 
     async def _handle_message(self, data: dict[str, Any]) -> None:
         if self.on_event is not None:
@@ -135,7 +144,7 @@ class OneBotV11Adapter:
             is_tome = self_id in at_qs or "all" in at_qs
 
         session_id = group_id if mtype == "group" else user_id
-        event = AgentEvent(
+        return AgentEvent(
             platform="qq",
             message_type=mtype,
             group_id=group_id,
@@ -147,14 +156,28 @@ class OneBotV11Adapter:
             message_id=data.get("message_id"),
             session_id=session_id,
             is_tome=is_tome,
-            _send_callback=self.send_callback,
+            _send_callback=self._reply,
         )
-        return event
+
+    # ---------- 发送 ----------
+
+    async def _reply(self, event: AgentEvent, text: str, at: bool = False) -> None:
+        if not text:
+            return
+        if at and event.message_type == "group":
+            text = f"[CQ:at,qq={event.user_id}] {text}"
+        if event.message_type == "group" and event.group_id:
+            await self.send_group_msg(event.group_id, text)
+        else:
+            await self.send_private_msg(event.user_id, text)
+
+    async def send_message(self, event: AgentEvent, text: str, at: bool = False) -> Any:
+        return await self._reply(event, text, at=at)
 
     # ---------- 异步 API 调用 ----------
 
     async def call_api(self, action: str, **params: Any) -> Any:
-        ws = self._ws
+        ws = self._active_ws
         if ws is None or ws.closed:
             raise ConnectionError("WebSocket 未连接")
         async with self._lock:
