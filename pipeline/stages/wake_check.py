@@ -18,8 +18,22 @@ class WakeCheckStage(Stage):
             event.stop()
             return
 
-        # 私聊总是响应
+        # 私聊:配对审批(参考 OpenClaw pairing),管理员/已批准用户直接通过
         if event.message_type == "private":
+            pairing_enabled = bool(self._config.get("security.pairing_enabled", False))
+            if pairing_enabled and not self._auth.is_admin_or_super(event.user_id):
+                if self._auth.is_paired(event.user_id):
+                    return
+                if self._auth.has_pending(event.user_id):
+                    await event.reply("你的配对申请已提交,请等待管理员审批。")
+                else:
+                    code = self._auth.request_pairing(event.user_id)
+                    await event.reply(
+                        f"🔐 你是未配对用户。配对码: {code}\n"
+                        "请管理员执行 `/approve <配对码>` 批准后即可使用本助手。"
+                    )
+                event.stop()
+                return
             return
 
         # 群白名单

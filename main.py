@@ -44,6 +44,7 @@ from .pipeline.stages import (
 )
 from .plugins.registry import PluginRegistry
 from .providers.base import create_provider
+from .security.audit import AuditLogger
 from .security.auth import AuthManager
 from .storage.db import JsonKV
 from .utils.config import Config, load_config
@@ -80,6 +81,16 @@ def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: Aut
         )
         return None
 
+    @registry.command("approve", permission_level=7)
+    async def approve(event: AgentEvent):
+        code = (event.state.get("command_arg") or "").strip()
+        if not code:
+            await event.reply("用法: /approve <配对码>")
+            return None
+        result = auth.approve_pairing(code, event.user_id)
+        await event.reply(f"配对结果: {result}")
+        return None
+
 
 def build_pipeline(config: Config, auth: AuthManager, plugin_registry: PluginRegistry, engine: AgentEngine) -> PipelineScheduler:
     return PipelineScheduler(
@@ -110,8 +121,16 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     auth = AuthManager(
         admin_users=tuple(config.get("security.admin_users", []) or []),
         super_admin_users=tuple(config.get("security.super_admin_users", []) or []),
+        trusted_folders=list(config.get("security.trusted_folders", []) or []),
+        sandbox_enabled=bool(config.get("security.sandbox_enabled", False)),
     )
     auth.load_dict(auth_db.get("auth", {}))
+
+    # 审计日志
+    audit_logger = AuditLogger(
+        ROOT_DIR / "data" / "audit.jsonl",
+        enabled=bool(config.get("security.audit_enabled", True)),
+    )
 
     # 工具
     tools = build_default_registry(auth)
@@ -158,6 +177,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         sqlite_store=sqlite_store,
         file_memory=file_memory,
         mcp_manager=mcp_manager,
+        audit_logger=audit_logger,
     )
 
     # 插件注册中心

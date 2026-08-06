@@ -47,6 +47,7 @@ class AgentEngine:
         sqlite_store: Any = None,
         file_memory: Any = None,
         mcp_manager: Any = None,
+        audit_logger: Any = None,
     ):
         self.provider = provider
         self.tools = tools
@@ -63,6 +64,7 @@ class AgentEngine:
         self.sqlite_store = sqlite_store
         self.file_memory = file_memory
         self.mcp_manager = mcp_manager
+        self.audit_logger = audit_logger
         self._static_prompt: str | None = None
 
         if self.subagent_manager is None:
@@ -435,5 +437,6 @@ class AgentEngine:
                 "file_memory": self.file_memory,
                 "tool_registry": self.tools,
                 "mcp_manager": self.mcp_manager,
+                "audit_logger": self.audit_logger,
             },
         )

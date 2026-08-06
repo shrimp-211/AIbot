@@ -7,8 +7,11 @@ from __future__ import annotations
 
 import fnmatch
 import ipaddress
+import time
+import uuid
 from dataclasses import dataclass, field
 from enum import IntEnum
+from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -77,11 +80,19 @@ class AuthManager:
         rules: list[PermissionRule] | None = None,
         admin_users: tuple[str, ...] = (),
         super_admin_users: tuple[str, ...] = (),
+        trusted_folders: list[str] | None = None,
+        sandbox_enabled: bool = False,
     ):
         self.rules: list[PermissionRule] = list(rules or DEFAULT_RULES)
         self.admin_users: set[str] = set(admin_users)
         self.super_admin_users: set[str] = set(super_admin_users)
         self.blacklist: set[str] = set()
+        self.trusted_folders: list[Path] = [Path(f).resolve() for f in (trusted_folders or [])]
+        self.sandbox_enabled = sandbox_enabled
+        # 配对审批(OpenClaw pairing):已批准使用 bot 的用户
+        self._approved_users: set[str] = set()
+        self.pending_approvals: dict[str, dict] = {}
+        self._approval_ttl = 600  # 审批码有效期(秒)
 
     # ---------- 角色 ----------
 
@@ -93,6 +104,53 @@ class AuthManager:
         if user_id in self.admin_users:
             return int(Role.ADMIN)
         return int(Role.TRUSTED)
+
+    def is_admin_or_super(self, user_id: str) -> bool:
+        return user_id in self.admin_users or user_id in self.super_admin_users
+
+    # ---------- 可信目录 / 沙箱 ----------
+
+    def is_path_trusted(self, path: str) -> bool:
+        """检查路径是否位于可信目录内(空列表 = 全部路径可信)。"""
+        if not self.trusted_folders:
+            return True
+        resolved = Path(path).resolve()
+        return any(str(resolved).startswith(str(f)) for f in self.trusted_folders)
+
+    # ---------- 配对审批(OpenClaw pairing) ----------
+
+    def request_pairing(self, user_id: str, group_id: str | None = None) -> str:
+        """为未配对用户生成审批码,返回审批码。"""
+        self._expire_approvals()
+        code = uuid.uuid4().hex[:6].upper()
+        self.pending_approvals[code] = {
+            "user_id": user_id,
+            "group_id": group_id,
+            "ts": time.time(),
+        }
+        return code
+
+    def approve_pairing(self, code: str, approver_id: str) -> dict:
+        """管理员批准配对码,授权该用户使用 bot。"""
+        self._expire_approvals()
+        record = self.pending_approvals.pop(code.upper(), None)
+        if not record:
+            return {"error": f"审批码不存在或已过期: {code}"}
+        self._approved_users.add(record["user_id"])
+        return {"ok": True, "user_id": record["user_id"], "approved_by": approver_id}
+
+    def is_paired(self, user_id: str) -> bool:
+        return user_id in self._approved_users
+
+    def has_pending(self, user_id: str) -> bool:
+        self._expire_approvals()
+        return any(r["user_id"] == user_id for r in self.pending_approvals.values())
+
+    def _expire_approvals(self) -> None:
+        now = time.time()
+        expired = [c for c, r in self.pending_approvals.items() if now - r.get("ts", 0) > self._approval_ttl]
+        for c in expired:
+            self.pending_approvals.pop(c, None)
 
     # ---------- 三层决策 ----------
 
@@ -140,12 +198,14 @@ class AuthManager:
             "admin_users": sorted(self.admin_users),
             "super_admin_users": sorted(self.super_admin_users),
             "blacklist": sorted(self.blacklist),
+            "approved_users": sorted(self._approved_users),
         }
 
     def load_dict(self, data: dict) -> None:
         self.admin_users = set(data.get("admin_users", []))
         self.super_admin_users = set(data.get("super_admin_users", []))
         self.blacklist = set(data.get("blacklist", []))
+        self._approved_users = set(data.get("approved_users", []))
 
 
 # ---------- SSRF 防护 ----------

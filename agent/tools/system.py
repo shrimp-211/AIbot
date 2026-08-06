@@ -1,7 +1,9 @@
-"""系统工具:Shell 执行(权限拦截)、定时任务管理、用户询问。"""
+"""系统工具:Shell 执行(权限拦截 + 沙箱 + 审计)、定时任务管理、用户询问。"""
 from __future__ import annotations
 
 import asyncio
+import os
+import shlex
 from typing import Any
 
 from ...security.auth import Decision
@@ -16,21 +18,41 @@ class BashTool(Tool):
         "properties": {
             "command": {"type": "string", "description": "要执行的 shell 命令"},
             "timeout": {"type": "integer", "description": "超时秒数,默认30"},
+            "workdir": {"type": "string", "description": "执行目录,默认当前目录"},
         },
         "required": ["command"],
     }
 
-    async def execute(self, ctx: ToolContext, command: str, timeout: int = 30) -> Any:
+    @staticmethod
+    def _sandbox_wrap(command: str, workdir: str) -> str:
+        """用 Docker 沙箱执行命令(参考 Codex/Gemini CLI 沙箱)。"""
+        vol = f"{os.path.abspath(workdir or '.')}:/workspace"
+        inner = shlex.quote(command)
+        return f"docker run --rm -v {vol} -w /workspace alpine sh -c {inner}"
+
+    async def execute(self, ctx: ToolContext, command: str, timeout: int = 30, workdir: str = ".") -> Any:
         role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
         decision = ctx.auth.check_command(command, role)
         if decision == Decision.DENY:
+            await self._audit(ctx, command, "deny", "危险命令被拦截")
             return {"error": "危险命令已被系统拦截"}
         if decision == Decision.ASK and role < 7:
+            await self._audit(ctx, command, "ask_deny", "需要管理员授权")
             return {"error": "该命令需要管理员授权才能执行"}
+
+        # 可信目录检查(空白名单 = 全部可信)
+        if not ctx.auth.is_path_trusted(workdir or "."):
+            await self._audit(ctx, command, "deny", "工作目录不在可信范围内")
+            return {"error": f"工作目录不在可信范围内: {workdir}"}
+
+        # 沙箱模式
+        if ctx.auth.sandbox_enabled:
+            command = self._sandbox_wrap(command, workdir or ".")
 
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
+                cwd=workdir or ".",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -41,16 +63,37 @@ class BashTool(Tool):
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.communicate()
+                await self._audit(ctx, command, "allow", "", "timeout")
                 return {"error": "命令执行超时"}
             out = stdout.decode("utf-8", errors="ignore").strip()
             err = stderr.decode("utf-8", errors="ignore").strip()
+            await self._audit(ctx, command, "allow", "", "ok" if proc.returncode == 0 else "error")
             return {
                 "exit_code": proc.returncode,
                 "stdout": out[:4000],
                 "stderr": err[:1000],
             }
         except Exception as exc:  # noqa: BLE001
+            await self._audit(ctx, command, "allow", str(exc), "error")
             return {"error": f"执行失败: {exc}"}
+
+    async def _audit(self, ctx: ToolContext, command: str, decision: str, reason: str, status: str = "ok") -> None:
+        audit = ctx.extra.get("audit_logger")
+        if audit is None:
+            return
+        try:
+            await audit.log(
+                user_id=ctx.event.user_id,
+                group_id=ctx.event.group_id,
+                action="bash",
+                tool_name="bash",
+                detail=command[:500],
+                decision=decision,
+                reason=reason,
+                status=status,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class CronTool(Tool):

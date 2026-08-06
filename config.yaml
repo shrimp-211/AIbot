@@ -82,10 +82,14 @@ pipeline:
   content_safety:
     max_length: 5000       # 单条消息最大长度
 
-# ---------- 权限 ----------
+# ---------- 权限与安全 ----------
 security:
   admin_users: []               # 管理员 QQ 号
   super_admin_users: ["123456789"]  # 超级管理员 QQ 号(改为你自己的)
+  trusted_folders: []           # bash 仅允许在这些目录执行(空=全部)
+  sandbox_enabled: false        # 命令经 Docker 沙箱执行(alpine)
+  audit_enabled: true           # 审计日志 data/audit.jsonl
+  pairing_enabled: false        # 私聊未配对用户需管理员审批(/approve)
   # 内置规则: 禁读 .env/secrets, 禁危险命令, curl/wget/sudo 需管理员
 
 # ---------- WebUI 控制台 ----------
