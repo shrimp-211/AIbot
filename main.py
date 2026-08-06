@@ -347,7 +347,11 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
             config,
             host=config.get("webui.host", "127.0.0.1"),
             port=int(config.get("webui.port", 8080)),
-            deps={"engine": engine, "tools": tools, "cron": cron},
+            deps={
+                "engine": engine, "tools": tools, "cron": cron,
+                "plugin_registry": plugin_registry,
+                "adapter_registry": adapter_registry,
+            },
         )
         await webui.start()
 

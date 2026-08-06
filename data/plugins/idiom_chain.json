@@ -1,0 +1,8 @@
+{
+  "name": "成语接龙",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "多轮会话成语接龙游戏,机器人自动接龙,本地成语库无网络。",
+  "commands": ["成语接龙"],
+  "dependencies": []
+}

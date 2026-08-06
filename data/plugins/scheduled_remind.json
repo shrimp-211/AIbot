@@ -1,0 +1,1 @@
+{"name":"定时提醒","version":"1.0.0","author":"移植自NoneBot社区","description":"延时提醒(内存存储,重启丢失),/提醒 <分钟后> <内容>","commands":["提醒"],"dependencies":[]}

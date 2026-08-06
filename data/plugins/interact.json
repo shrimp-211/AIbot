@@ -1,0 +1,8 @@
+{
+  "name": "互动工具",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "互动工具:点赞(所有用户可用)与设置精华(需管理员权限)。",
+  "commands": ["赞", "精华"],
+  "dependencies": ["AdapterRegistry"]
+}

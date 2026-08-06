@@ -1,0 +1,1 @@
+{"name": "撤回","version": "1.0.0","author": "移植自noneplugin/nonebot-plugin-withdraw","description": "管理员撤回机器人最后一条消息。/撤回","commands": ["撤回"],"dependencies": ["AdapterRegistry"]}

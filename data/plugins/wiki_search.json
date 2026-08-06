@@ -1,0 +1,1 @@
+{"name":"Wiki搜索","version":"1.0.0","author":"移植自KoishiMoe/nonebot-plugin-mediawiki","description":"搜索Wikipedia中文摘要,/wiki <关键词>","commands":["wiki"],"dependencies":[]}

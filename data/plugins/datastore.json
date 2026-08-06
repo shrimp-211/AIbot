@@ -1,0 +1,1 @@
+{"name": "键值存储","version": "1.0.0","author": "移植自he0119/nonebot-plugin-datastore","description": "简单键值存储,按群/私聊隔离。/存 key value /取 key /删 key","commands": ["存","取","删"],"dependencies": ["JsonKV"]}

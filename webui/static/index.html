@@ -14,6 +14,7 @@
   .container { max-width: 1000px; margin: 0 auto; padding: 24px; }
   .login { max-width: 360px; margin: 20vh auto; }
   h1 { font-size: 22px; margin-bottom: 20px; }
+  h3 { margin-bottom: 12px; color: var(--accent); }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
   input, textarea, button { background: #14161d; border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 14px; width: 100%; }
   button { background: var(--accent); border: none; cursor: pointer; font-weight: 600; width: auto; padding: 10px 18px; }
@@ -33,15 +34,16 @@
   #chat .msg { margin-bottom: 10px; }
   #chat .msg b { color: var(--accent); }
   #chat .msg.assistant b { color: var(--green); }
-  .nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-  .nav button { background: transparent; border: 1px solid var(--border); }
+  .nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .nav button { background: transparent; border: 1px solid var(--border); font-size: 13px; padding: 8px 12px; border-radius: 6px; }
   .nav button.active { background: var(--accent); border-color: var(--accent); }
   .error { color: #ff6b6b; margin-top: 8px; font-size: 13px; }
+  .msg-green { color: var(--green); margin-left: 8px; font-size: 13px; }
 </style>
 </head>
 <body>
 <div id="loginView" class="container login">
-  <h1>🔐 QQ AI Agent 控制台</h1>
+  <h1>QQ AI Agent 控制台</h1>
   <div class="card">
     <input type="password" id="password" placeholder="管理密码" onkeydown="if(event.key==='Enter')doLogin()">
     <div class="error hidden" id="loginErr"></div>
@@ -52,7 +54,7 @@
 </div>
 
 <div id="mainView" class="container hidden">
-  <h1>🤖 QQ AI Agent 控制台</h1>
+  <h1>QQ AI Agent 控制台</h1>
   <div class="nav">
     <button class="active" data-page="status" onclick="showPage('status')">状态</button>
     <button data-page="tools" onclick="showPage('tools')">工具</button>
@@ -61,35 +63,40 @@
     <button data-page="skills" onclick="showPage('skills')">技能</button>
     <button data-page="audit" onclick="showPage('audit')">审计</button>
     <button data-page="subagents" onclick="showPage('subagents')">子代理</button>
+    <button data-page="plugins" onclick="showPage('plugins')">插件</button>
+    <button data-page="config" onclick="showPage('config')">配置</button>
+    <button data-page="adapters" onclick="showPage('adapters')">适配器</button>
     <button data-page="chat" onclick="showPage('chat')">聊天测试</button>
   </div>
 
-  <div id="page-status">
-    <div class="stats" id="statsBox"></div>
+  <div id="page-status"><div class="stats" id="statsBox"></div></div>
+  <div id="page-tools" class="hidden"><div class="card"><div id="toolList"></div></div></div>
+  <div id="page-tasks" class="hidden"><div class="card"><div id="taskList"></div></div></div>
+  <div id="page-mcp" class="hidden"><div class="card"><div id="mcpList"></div></div></div>
+  <div id="page-skills" class="hidden"><div class="card"><div id="skillList"></div></div></div>
+  <div id="page-audit" class="hidden"><div class="card"><div id="auditList"></div></div></div>
+  <div id="page-subagents" class="hidden"><div class="card"><div id="subagentList"></div></div></div>
+
+  <div id="page-plugins" class="hidden">
+    <div class="card">
+      <div class="row"><h3 style="margin:0">已加载插件</h3><span id="handlerCount" style="color:var(--muted)"></span></div>
+      <div id="pluginList"></div>
+    </div>
   </div>
 
-  <div id="page-tools" class="hidden">
-    <div class="card"><div id="toolList"></div></div>
+  <div id="page-config" class="hidden">
+    <div class="card">
+      <div class="row">
+        <button onclick="loadConfig()">刷新</button>
+        <button class="secondary" onclick="saveConfig()">保存配置</button>
+        <span class="msg-green" id="cfgSaveMsg"></span>
+      </div>
+      <textarea id="cfgEditor" style="height:500px;font-family:monospace;font-size:13px;margin-top:8px;white-space:pre" placeholder="加载中..."></textarea>
+    </div>
   </div>
 
-  <div id="page-tasks" class="hidden">
-    <div class="card"><div id="taskList"></div></div>
-  </div>
-
-  <div id="page-mcp" class="hidden">
-    <div class="card"><div id="mcpList"></div></div>
-  </div>
-
-  <div id="page-skills" class="hidden">
-    <div class="card"><div id="skillList"></div></div>
-  </div>
-
-  <div id="page-audit" class="hidden">
-    <div class="card"><div id="auditList"></div></div>
-  </div>
-
-  <div id="page-subagents" class="hidden">
-    <div class="card"><div id="subagentList"></div></div>
+  <div id="page-adapters" class="hidden">
+    <div class="card"><h3>适配器状态</h3><div id="adapterList"></div></div>
   </div>
 
   <div id="page-chat" class="hidden">
@@ -101,7 +108,7 @@
       </div>
     </div>
     <div class="card">
-      <b>📢 群广播</b>
+      <b>群广播</b>
       <div class="row" style="margin-top:10px">
         <input id="broadcastGroup" placeholder="QQ 群号">
         <input id="broadcastText" placeholder="要发送的消息" onkeydown="if(event.key==='Enter')sendBroadcast()">
@@ -140,13 +147,17 @@ async function doLogin() {
 
 function showPage(name) {
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.page === name));
-  ['status', 'tools', 'tasks', 'mcp', 'skills', 'audit', 'subagents', 'chat'].forEach(p => $('page-' + p).classList.toggle('hidden', p !== name));
+  const pages = ['status', 'tools', 'tasks', 'mcp', 'skills', 'audit', 'subagents', 'plugins', 'config', 'adapters', 'chat'];
+  pages.forEach(p => $('page-' + p).classList.toggle('hidden', p !== name));
   if (name === 'tools') loadTools();
   if (name === 'tasks') loadTasks();
   if (name === 'mcp') loadMCP();
   if (name === 'skills') loadSkills();
   if (name === 'audit') loadAudit();
   if (name === 'subagents') loadSubagents();
+  if (name === 'plugins') loadPlugins();
+  if (name === 'config') loadConfig();
+  if (name === 'adapters') loadAdapters();
   if (name === 'chat') connectChat();
 }
 
@@ -187,7 +198,7 @@ async function loadMCP() {
     ? servers.map(s => `
       <div class="tool">
         <code>${s.name}</code>
-        <small>运行中: ${s.running ? '✅' : '❌'} | ${s.command} | 工具: ${(s.tools || []).join(', ') || '无'}</small>
+        <small>运行中: ${s.running ? 'OK' : 'X'} | ${s.command} | 工具: ${(s.tools || []).join(', ') || '无'}</small>
       </div>`).join('')
     : '<small>未配置 MCP 服务器(见 config.yaml 的 mcp.servers)</small>';
 }
@@ -197,12 +208,7 @@ async function loadSkills() {
   if (res.status === 401) return logout();
   const skills = res.data.skills || [];
   $('skillList').innerHTML = skills.length
-    ? skills.map(s => `
-      <div class="tool">
-        <code>${s.name}</code>
-        <small>${s.description}</small>
-        <small style="color:var(--muted)">${s.content}</small>
-      </div>`).join('')
+    ? skills.map(s => `<div class="tool"><code>${s.name}</code><small>${s.description}</small></div>`).join('')
     : '<small>暂无技能(SKILL.md)</small>';
 }
 
@@ -230,11 +236,51 @@ async function loadSubagents() {
   $('subagentList').innerHTML = `
     <div class="tool"><code>运行中: ${running} | 已完成: ${done}</code></div>
     ${Object.entries(results).map(([id, r]) => `
-      <div class="tool">
-        <code>${id} — ${r.status}</code>
-        <small>${(r.result || r.error || '').slice(0, 200)}</small>
-      </div>`).join('')
+      <div class="tool"><code>${id} — ${r.status}</code><small>${(r.result || r.error || '').slice(0, 200)}</small></div>`).join('')
     || '<small>暂无子代理任务</small>'}`;
+}
+
+async function loadPlugins() {
+  const res = await api('/api/plugins');
+  if (res.status === 401) return logout();
+  const plugins = res.data.plugins || [];
+  $('handlerCount').textContent = ` (handler: ${res.data.handler_count || 0})`;
+  $('pluginList').innerHTML = plugins.length
+    ? plugins.map(p => `
+      <div class="tool">
+        <code>${p.name} ${p.version ? 'v'+p.version : ''}</code>
+        <small>${p.description}</small>
+        <small style="color:var(--muted)">命令: ${(p.commands||[]).join(', ') || '无'} | 依赖: ${(p.dependencies||[]).join(',') || '无'}</small>
+      </div>`).join('')
+    : '<small>暂无外部插件</small>';
+}
+
+let cfgLoaded = false;
+async function loadConfig() {
+  const res = await api('/api/config');
+  if (res.status === 401) return logout();
+  $('cfgEditor').value = res.data.content || '';
+  cfgLoaded = true;
+}
+async function saveConfig() {
+  $('cfgSaveMsg').textContent = '';
+  if (!$('cfgEditor').value.trim()) { $('cfgSaveMsg').textContent = '内容不能为空'; return; }
+  const res = await api('/api/config', 'POST', { content: $('cfgEditor').value });
+  if (res.data.ok) { $('cfgSaveMsg').textContent = '已保存(需重启生效)'; }
+  else { $('cfgSaveMsg').textContent = '保存失败: ' + (res.data.error || ''); $('cfgSaveMsg').style.color = '#ff6b6b'; }
+}
+
+async function loadAdapters() {
+  const res = await api('/api/adapters');
+  if (res.status === 401) return logout();
+  const adapters = res.data.adapters || [];
+  $('adapterList').innerHTML = adapters.length
+    ? adapters.map(a => `
+      <div class="tool">
+        <code>${a.name} (${a.type})</code>
+        <small>平台: ${a.platform} | 状态: ${a.connected ? '已连接' : '未连接'}</small>
+      </div>`).join('')
+    : '<small>无适配器</small>';
 }
 
 let chatWs = null;
@@ -244,7 +290,6 @@ function connectChat() {
   chatWs.onmessage = e => { const d = JSON.parse(e.data); addChat('assistant', d.text); };
   chatWs.onclose = () => { chatWs = null; };
 }
-
 function addChat(role, text) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
@@ -252,7 +297,6 @@ function addChat(role, text) {
   $('chat').appendChild(div);
   $('chat').scrollTop = $('chat').scrollHeight;
 }
-
 function sendChat() {
   const text = $('chatInput').value.trim();
   if (!text || !chatWs || chatWs.readyState !== 1) return;
@@ -260,7 +304,6 @@ function sendChat() {
   $('chatInput').value = '';
   chatWs.send(JSON.stringify({ text }));
 }
-
 async function sendBroadcast() {
   const group_id = $('broadcastGroup').value.trim();
   const text = $('broadcastText').value.trim();
@@ -271,20 +314,14 @@ async function sendBroadcast() {
     return;
   }
   const res = await api('/api/broadcast', 'POST', { group_id, text });
-  if (res.data.ok) {
-    $('broadcastText').value = '';
-  } else {
-    $('broadcastErr').textContent = res.data.error || '发送失败';
-    $('broadcastErr').classList.remove('hidden');
-  }
+  if (res.data.ok) { $('broadcastText').value = ''; }
+  else { $('broadcastErr').textContent = res.data.error || '发送失败'; $('broadcastErr').classList.remove('hidden'); }
 }
-
 function logout() {
   token = ''; localStorage.removeItem('token');
   $('mainView').classList.add('hidden');
   $('loginView').classList.remove('hidden');
 }
-
 if (token) { $('loginView').classList.add('hidden'); $('mainView').classList.remove('hidden'); loadStatus(); }
 </script>
 </body>

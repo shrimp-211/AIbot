@@ -1,0 +1,1 @@
+{"name": "趣味占卜","version": "1.0.0","author": "移植自noneplugin/nonebot-plugin-shindan","description": "趣味占卜,生成shindanmaker链接。/占卜 <id>","commands": ["占卜"],"dependencies": []}

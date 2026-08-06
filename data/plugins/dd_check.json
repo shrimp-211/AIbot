@@ -1,0 +1,1 @@
+{"name":"成分姬","version":"1.0.0","author":"移植自noneplugin/nonebot-plugin-ddcheck","description":"查B站用户关注的VTuber成分,/查成分 <B站UID>","commands":["查成分"],"dependencies":[]}

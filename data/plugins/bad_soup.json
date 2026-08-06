@@ -1,0 +1,8 @@
+{
+  "name": "毒鸡汤",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "随机扎心毒鸡汤与暖心心灵鸡汤,支持连发。",
+  "commands": ["毒鸡汤", "心灵鸡汤", "鸡汤连发"],
+  "dependencies": []
+}

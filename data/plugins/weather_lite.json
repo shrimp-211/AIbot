@@ -1,0 +1,1 @@
+{"name": "天气Lite","version": "1.0.0","author": "移植自NoneBot社区","description": "调wttr.in获取城市天气(纯文本),SSRF防护。/天气lite 城市","commands": ["天气lite"],"dependencies": []}

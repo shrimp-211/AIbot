@@ -1,0 +1,8 @@
+{
+  "name": "记账本",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "经典记账本:记录支出、查账、删账与当日支出合计。",
+  "commands": ["记账", "查账", "删账", "本日支出"],
+  "dependencies": ["JsonKV"]
+}

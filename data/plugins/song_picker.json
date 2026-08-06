@@ -1,0 +1,1 @@
+{"name":"点歌","version":"1.0.0","author":"移植自NoneBot社区","description":"搜索网易云歌曲信息,/点歌 <歌名>","commands":["点歌"],"dependencies":[]}

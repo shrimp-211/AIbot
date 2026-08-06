@@ -77,6 +77,8 @@ class WebUIServer:
         self._tokens: dict[str, float] = {}
         self._password = ""
         self._password_hash = ""
+        # 可读写配置
+        self._config_path = ROOT_DIR / "src" / "config.yaml"
         self._setup_auth()
         self._setup_routes()
 
@@ -104,6 +106,10 @@ class WebUIServer:
         self._app.router.add_get("/api/audit", self._audit)
         self._app.router.add_get("/api/subagents", self._subagents)
         self._app.router.add_post("/api/broadcast", self._broadcast)
+        self._app.router.add_get("/api/plugins", self._plugins_list)
+        self._app.router.add_get("/api/config", self._config_view)
+        self._app.router.add_post("/api/config", self._config_save)
+        self._app.router.add_get("/api/adapters", self._adapters_list)
         self._app.router.add_get("/ws/chat", self._chat_ws)
 
     # ---------- 生命周期 ----------
@@ -275,6 +281,79 @@ class WebUIServer:
             logger.exception("WebUI 广播失败")
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
         return web.json_response({"ok": True, "group_id": group_id})
+
+    # ---------- 插件管理 ----------
+
+    async def _plugins_list(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        registry = self._deps.get("plugin_registry")
+        if registry is None:
+            return web.json_response({"ok": True, "plugins": []})
+        meta = registry.plugin_metadata()
+        plugins = []
+        for stem, m in sorted(meta.items()):
+            plugins.append({
+                "name": m.get("name") or stem,
+                "version": m.get("version", ""),
+                "description": m.get("description", ""),
+                "commands": m.get("commands", []),
+                "dependencies": m.get("dependencies", []),
+            })
+        return web.json_response({
+            "ok": True,
+            "plugins": plugins,
+            "handler_count": registry.handler_count(),
+        })
+
+    # ---------- 配置编辑 ----------
+
+    async def _config_view(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        try:
+            content = self._config_path.read_text(encoding="utf-8") if self._config_path.is_file() else ""
+        except OSError:
+            content = ""
+        return web.json_response({"ok": True, "content": content, "path": str(self._config_path)})
+
+    async def _config_save(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效 JSON"}, status=400)
+        content = str(data.get("content", "") or "")
+        if not content.strip():
+            return web.json_response({"ok": False, "error": "内容不能为空"}, status=400)
+        try:
+            backup = self._config_path.read_text(encoding="utf-8")[:200] if self._config_path.is_file() else ""
+            self._config_path.write_text(content, encoding="utf-8")
+            logger.info("WebUI 已更新配置文件")
+        except OSError as exc:
+            logger.exception("配置文件写入失败")
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+        return web.json_response({"ok": True, "backup_preview": backup})
+
+    # ---------- 适配器状态 ----------
+
+    async def _adapters_list(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        registry = self._deps.get("adapter_registry")
+        if registry is None:
+            return web.json_response({"ok": True, "adapters": []})
+        adapters = []
+        for name in registry.names():
+            adapter = registry.get(name)
+            adapters.append({
+                "name": name,
+                "platform": getattr(adapter, "platform", ""),
+                "type": type(adapter).__name__,
+                "connected": bool(getattr(adapter, "_active_ws", None) or getattr(adapter, "_connections", None)),
+            })
+        return web.json_response({"ok": True, "adapters": adapters})
 
     # ---------- 聊天 ----------
 
