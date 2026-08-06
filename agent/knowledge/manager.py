@@ -144,10 +144,12 @@ class KnowledgeManager:
             self._docs.append(doc)
             self._doc_by_id[doc_id] = doc
 
+            vector_ok = False
             if self.embedding is not None:
                 try:
                     vectors = await self.embedding.embed(chunks)
                     self.vector.add(self._l2_normalize(vectors), vec_ids)
+                    vector_ok = True
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("向量入库失败(保留文本,检索走关键词): {}", exc)
 
@@ -157,7 +159,7 @@ class KnowledgeManager:
                 "doc_id": doc_id,
                 "chunks": len(chunks),
                 "chars": len(content),
-                "vector": self.embedding is not None,
+                "vector": vector_ok,
             }
 
     async def delete_document(self, doc_id: str) -> dict:

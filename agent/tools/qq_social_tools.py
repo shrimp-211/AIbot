@@ -11,10 +11,14 @@ from ...adapter.qq_rich_media import cq_dice, cq_music
 from .base import Tool, ToolContext
 
 
-def _safe_call(fn, *, fallback: str) -> Any:
-    """包装适配器调用:不支持/未连接时返回清晰提示而非抛错。"""
+async def _safe_call(fn, *, fallback: str) -> Any:
+    """包装适配器调用:不支持/未连接时返回清晰提示而非抛错。
+
+    fn 返回的是 awaitable(适配器方法均为 async def),这里必须 await,
+    否则工具会把未消费的 coroutine 当作结果返回。
+    """
     try:
-        return fn()
+        return await fn()
     except NotImplementedError:
         return {"error": fallback}
     except AttributeError:
@@ -41,11 +45,11 @@ class QqSendPokeTool(Tool):
         target = user_id or str(ctx.event.user_id)
         if group_id or ctx.event.message_type == "group":
             gid = group_id or str(ctx.event.group_id or "")
-            return _safe_call(
+            return await _safe_call(
                 lambda: adapter.group_poke(gid, target),
                 fallback="当前平台不支持群戳一戳(NapCat 专属 API)",
             )
-        return _safe_call(
+        return await _safe_call(
             lambda: adapter.friend_poke(target),
             fallback="当前平台不支持好友戳一戳(NapCat 专属 API)",
         )
@@ -67,7 +71,7 @@ class QqSendEmojiTool(Tool):
         mid = message_id or getattr(ctx.event, "message_id", 0) or 0
         if not mid:
             return {"error": "无法定位要回应的消息"}
-        return _safe_call(
+        return await _safe_call(
             lambda: adapter.set_msg_emoji_like(int(mid), int(emoji_id)),
             fallback="当前平台不支持表情回应(NapCat 专属 API)",
         )
@@ -121,7 +125,7 @@ class QqOcrTool(Tool):
         adapter = ctx.adapter
         if not hasattr(adapter, "ocr_image"):
             return {"error": "当前适配器不支持 OCR 扩展 API"}
-        result = _safe_call(
+        result = await _safe_call(
             lambda: adapter.ocr_image(image),
             fallback="当前平台不支持图片 OCR(go-cqhttp/NapCat 扩展)",
         )

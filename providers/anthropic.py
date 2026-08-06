@@ -28,6 +28,7 @@ class AnthropicProvider(BaseProvider):
         self.max_tokens = int(config.get("max_tokens", 8192) or 8192)
         # Claude 系列原生多模态(图像)且支持流式与函数调用
         self.modalities = DEFAULT_MODALITIES | {MODALITY_IMAGE, MODALITY_STREAMING, MODALITY_FUNCTION_CALL}
+        self.image_block_format = "anthropic"  # base64 source 格式
         # extended_thinking(参考 Claude Code):thinking.enabled + budget_tokens
         thinking_cfg = config.get("thinking") or {}
         if isinstance(thinking_cfg, bool):

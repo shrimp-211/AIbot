@@ -83,10 +83,13 @@ class ImageGenerator:
                 json={"model": self.model, "prompt": prompt, "n": 1, "size": size},
             )
             resp.raise_for_status()
-            data = resp.json().get("data", [{}])[0]
+            data_list = resp.json().get("data") or []
+            data = data_list[0] if data_list else {}
+        if not data:
+            raise RuntimeError("OpenAI 图片生成返回为空")
         out_path = self.output_dir / f"img_{_stamp()}.png"
         if data.get("b64_json"):
-            out_path.write_bytes(base64.b64decode(data["b64_json"]))
+            await asyncio.to_thread(out_path.write_bytes, base64.b64decode(data["b64_json"]))
             return str(out_path)
         url = data.get("url")
         if url:
@@ -120,7 +123,7 @@ class ImageGenerator:
         async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            out_path.write_bytes(resp.content)
+            await asyncio.to_thread(out_path.write_bytes, resp.content)
         return str(out_path)
 
 
@@ -175,8 +178,16 @@ class VideoGenerator:
     async def _upload_image(self, client, headers: dict, path: str) -> str:
         import httpx
 
-        files = {"file": (Path(path).name, open(path, "rb"), "image/png")}
-        resp = await client.post(f"{self.base_url}/files", headers=headers, files=files)
+        # 按扩展名推断 MIME,避免 JPEG 图误标 image/png 导致 Runway 解析失败
+        mime = "image/png"
+        ext = Path(path).suffix.lower()
+        if ext in (".jpg", ".jpeg"):
+            mime = "image/jpeg"
+        elif ext == ".webp":
+            mime = "image/webp"
+        with open(path, "rb") as f:
+            files = {"file": (Path(path).name, f, mime)}
+            resp = await client.post(f"{self.base_url}/files", headers=headers, files=files)
         resp.raise_for_status()
         return resp.json().get("id", "")
 
@@ -195,7 +206,12 @@ class VideoGenerator:
                     outputs = task.get("output") or []
                     if not outputs:
                         raise RuntimeError("Runway 任务成功但无输出")
-                    return outputs[0] if isinstance(outputs[0], str) else outputs[0].get("url", "")
+                    first = outputs[0]
+                    if isinstance(first, str):
+                        return first
+                    if isinstance(first, dict):
+                        return first.get("url", "")
+                    raise RuntimeError(f"Runway 输出格式异常: {first!r}")
                 if status in ("FAILED", "CANCELLED", "THROTTLED"):
                     raise RuntimeError(f"Runway 任务失败: {status} {task.get('failure')}")
                 await asyncio.sleep(3)
@@ -208,7 +224,7 @@ class VideoGenerator:
         async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-            out_path.write_bytes(resp.content)
+            await asyncio.to_thread(out_path.write_bytes, resp.content)
         return str(out_path)
 
 

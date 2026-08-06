@@ -467,7 +467,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
                 return mime, base64.b64encode(f.read()).decode()
 
         mime, b64 = await asyncio.to_thread(_read)
-        if type(provider).__name__ == "AnthropicProvider":
+        # 按活动 provider 的图片块协议构建(ProviderManager 经 __getattr__ 委托)
+        if getattr(provider, "image_block_format", "openai") == "anthropic":
             blocks: list[dict] = [
                 {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
             ]

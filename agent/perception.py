@@ -78,7 +78,7 @@ class ImagePerceiver:
     async def _ocr_paddle(image_path: str) -> str:
         try:
             from paddleocr import PaddleOCR
-        except ImportError:
+        except Exception:  # noqa: BLE001  (ImportError + numpy 兼容崩溃等)
             return ""
         try:
 
@@ -86,15 +86,22 @@ class ImagePerceiver:
                 ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
                 result = ocr.ocr(image_path, cls=True)
                 lines: list[str] = []
-                for page in result or []:
-                    if not page:
-                        continue
-                    for item in page:
-                        txt = (item or [None, None])[1]
-                        if isinstance(txt, tuple) and txt:
-                            lines.append(str(txt[0]))
-                        elif txt:
-                            lines.append(str(txt))
+                if isinstance(result, dict):
+                    # PaddleOCR 3.x: {"rec_texts": [...], "rec_polys": [...], ...}
+                    lines = [str(t) for t in (result.get("rec_texts") or []) if t]
+                else:
+                    # PaddleOCR 2.x: [[[box, (text, conf)], ...], ...]
+                    for page in result or []:
+                        if not page:
+                            continue
+                        for item in page:
+                            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                                continue
+                            txt = item[1]
+                            if isinstance(txt, (list, tuple)) and txt:
+                                lines.append(str(txt[0]))
+                            elif txt:
+                                lines.append(str(txt))
                 return "\n".join(lines).strip()
 
             return await asyncio.to_thread(_run)
@@ -152,6 +159,18 @@ class VideoPerceiver:
     """
 
     async def extract_frames(self, video_path: str, max_frames: int = 4) -> list[str]:
+        """抽取关键帧,返回帧图片路径列表。
+
+        注意:帧写入系统临时目录,仅 summarize 会自动清理;单独调用本方法
+        时由调用方负责删除返回的帧文件。
+        """
+        frames, _tmpdir = await self._extract_frames_into(video_path, max_frames)
+        return frames
+
+    async def _extract_frames_into(
+        self, video_path: str, max_frames: int = 4
+    ) -> tuple[list[str], str | None]:
+        """抽取帧并返回 (帧路径列表, 临时目录)。临时目录由调用方负责清理。"""
         try:
             import cv2
         except ImportError as exc:
@@ -159,7 +178,7 @@ class VideoPerceiver:
                 "视频理解需要 opencv-python(pip install opencv-python-headless)"
             ) from exc
 
-        def _run() -> list[str]:
+        def _run() -> tuple[list[str], str]:
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
                 raise RuntimeError(f"无法打开视频: {video_path}")
@@ -170,17 +189,19 @@ class VideoPerceiver:
             import tempfile
 
             tmpdir = tempfile.mkdtemp(prefix="qqvideo_")
-            for i in range(n):
-                pos = int(total * i / n) if total > 0 else i
-                cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
-                ok, frame = cap.read()
-                if not ok:
-                    continue
-                out = os.path.join(tmpdir, f"frame_{i}.jpg")
-                cv2.imwrite(out, frame)
-                frames.append(out)
-            cap.release()
-            return frames
+            try:
+                for i in range(n):
+                    pos = int(total * i / n) if total > 0 else i
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+                    ok, frame = cap.read()
+                    if not ok:
+                        continue
+                    out = os.path.join(tmpdir, f"frame_{i}.jpg")
+                    cv2.imwrite(out, frame)
+                    frames.append(out)
+            finally:
+                cap.release()
+            return frames, tmpdir
 
         try:
             return await asyncio.to_thread(_run)
@@ -188,18 +209,25 @@ class VideoPerceiver:
             raise RuntimeError(f"视频帧提取失败: {exc}") from exc
 
     async def summarize(self, video_path: str, analyzer=None) -> str:
-        frames = await self.extract_frames(video_path)
-        if not frames:
-            return "无法从视频中提取到可用帧。"
-        if analyzer is None:
-            return f"已从视频提取 {len(frames)} 个关键帧(需多模态 LLM 描述画面)。"
-        descriptions = []
-        for i, f in enumerate(frames):
-            try:
-                descriptions.append(f"[帧{i+1}] {await analyzer(f, '描述这个视频画面内容')}")
-            except Exception as exc:  # noqa: BLE001
-                descriptions.append(f"[帧{i+1}] (分析失败: {exc})")
-        return "\n".join(descriptions)
+        """抽取关键帧并逐帧描述,汇总后清理临时帧(防磁盘泄漏)。"""
+        frames, tmpdir = await self._extract_frames_into(video_path)
+        try:
+            if not frames:
+                return "无法从视频中提取到可用帧。"
+            if analyzer is None:
+                return f"已从视频提取 {len(frames)} 个关键帧(需多模态 LLM 描述画面)。"
+            descriptions = []
+            for i, f in enumerate(frames):
+                try:
+                    descriptions.append(f"[帧{i+1}] {await analyzer(f, '描述这个视频画面内容')}")
+                except Exception as exc:  # noqa: BLE001
+                    descriptions.append(f"[帧{i+1}] (分析失败: {exc})")
+            return "\n".join(descriptions)
+        finally:
+            if tmpdir:
+                import shutil
+
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class DocumentPerceiver:
@@ -230,7 +258,10 @@ class DocumentPerceiver:
 
     @staticmethod
     async def _parse_text(path: str) -> str:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        async def _read() -> str:
+            return Path(path).read_text(encoding="utf-8", errors="replace")
+
+        text = await asyncio.to_thread(_read)
         return text[:200_000]  # 限制单文档 20 万字符
 
     @staticmethod
@@ -426,6 +457,8 @@ class PerceptionManager:
             doc = await self.document.parse(file_path)
             return {"kind": "document", "result": doc["content"][:2000], "meta": {k: v for k, v in doc.items() if k != "content"}}
         if kind == "code":
-            code = Path(file_path).read_text(encoding="utf-8", errors="replace")
+            code = await asyncio.to_thread(
+                lambda: Path(file_path).read_text(encoding="utf-8", errors="replace")
+            )
             return {"kind": "code", "result": self.code.analyze(code, file_path)}
         return {"kind": "unknown", "result": f"暂不支持分析该文件类型: {file_path}"}

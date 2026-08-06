@@ -54,10 +54,16 @@ def cq_music(
     kind: str = "163", music_id: int | str = "", *, title: str = "", url: str = ""
 ) -> str:
     """音乐分享。kind: 163(网易云) | qq(QQ音乐) | custom(自定义)。
-    网易云/QQ音乐传 music_id;custom 传 title+url。
+    网易云/QQ音乐传 music_id;custom 传 title+url。非法 kind 抛 ValueError。
     """
+    if kind not in ("163", "qq", "custom"):
+        raise ValueError(f"未知音乐类型: {kind}(支持 163 / qq / custom)")
     if kind == "custom":
+        if not (title and url):
+            raise ValueError("自定义音乐需要 title 和 url")
         return _cq("music", {"type": "custom", "title": title, "url": url})
+    if not music_id:
+        raise ValueError(f"音乐类型 {kind} 需要 music_id")
     return _cq("music", {"type": kind, "id": str(music_id)})
 
 

@@ -447,7 +447,7 @@ async function loadAdapters() {
 let chatWs = null;
 function connectChat() {
   if (chatWs && chatWs.readyState <= 1) return;
-  chatWs = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/chat');
+  chatWs = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/chat', ['chat', 'auth.' + token]);
   chatWs.onmessage = e => { const d = JSON.parse(e.data); addChat('assistant', d.text); };
   chatWs.onclose = () => { chatWs = null; };
 }

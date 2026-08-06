@@ -53,6 +53,9 @@ class BaseProvider(ABC):
     name: str = "base"
     # 模态能力声明:默认文本 + 函数调用;多模态模型在子类覆盖
     modalities: frozenset[str] = DEFAULT_MODALITIES
+    # 图片 content block 协议格式:openai(image_url) | anthropic(base64 source)。
+    # 供上层视觉分析回调构建消息块;fallback 链(ProviderManager)经 __getattr__ 委托到活动 provider。
+    image_block_format: str = "openai"
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -249,8 +252,10 @@ class RerankProvider(ABC):
         return bool(self.config.get("api_key"))
 
 
-def create_stt_provider(config: dict[str, Any]) -> STTProvider:
+def create_stt_provider(config: dict[str, Any]) -> STTProvider | None:
     ptype = (config or {}).get("type", "whisper")
+    if ptype in ("none", "disabled"):
+        return None
     if ptype in ("whisper", "openai"):
         from .sources.stt_whisper import WhisperSTTProvider
 
@@ -258,8 +263,10 @@ def create_stt_provider(config: dict[str, Any]) -> STTProvider:
     raise ValueError(f"未知 STT Provider: {ptype}")
 
 
-def create_tts_provider(config: dict[str, Any]) -> TTSProvider:
+def create_tts_provider(config: dict[str, Any]) -> TTSProvider | None:
     ptype = (config or {}).get("type", "edge")
+    if ptype in ("none", "disabled"):
+        return None
     if ptype in ("edge", "edge-tts"):
         from .sources.tts_edge import EdgeTTSProvider
 
@@ -300,8 +307,10 @@ class ChainedEmbeddingProvider(EmbeddingProvider):
             return False
 
 
-def create_embedding_provider(config: dict[str, Any]) -> EmbeddingProvider:
+def create_embedding_provider(config: dict[str, Any]) -> EmbeddingProvider | None:
     ptype = (config or {}).get("type", "openai")
+    if ptype in ("none", "disabled"):
+        return None
     if ptype in ("openai", "openai_compatible"):
         from .sources.embedding_openai import OpenAIEmbeddingProvider
 

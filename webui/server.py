@@ -26,6 +26,19 @@ from ..utils.config import Config, save_config, validate_config
 _SECRET_MASK = "***(已配置)***"
 
 
+def _safe_int(value: Any, default: int, lo: int | None = None, hi: int | None = None) -> int:
+    """安全解析整数入参,非法值回退默认,并夹在 [lo, hi] 区间。"""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    if lo is not None:
+        n = max(lo, n)
+    if hi is not None:
+        n = min(hi, n)
+    return n
+
+
 def _is_secret_key(key: str) -> bool:
     k = key.lower()
     return (
@@ -199,6 +212,8 @@ class WebUIServer:
         except json.JSONDecodeError:
             return web.json_response({"ok": False, "error": "无效请求"}, status=400)
         password = data.get("password", "")
+        if not isinstance(password, str):
+            return web.json_response({"ok": False, "error": "密码格式错误"}, status=400)
         if self._password:
             ok = secrets.compare_digest(password, self._password)
         else:
@@ -412,8 +427,17 @@ class WebUIServer:
             return web.json_response(
                 {"ok": False, "error": "配置校验失败", "errors": errors[:20]}, status=400
             )
-        # 视图里的掩码占位符不落盘:回填当前真实值,防止保存空掩码覆盖密钥
-        _restore_secrets(new_data, self._config.raw() or {})
+        # 视图里的掩码占位符不落盘:回填"磁盘原文"(未解析环境变量的值),
+        # 否则会把 ${ENV_VAR} 引用的密钥明文烤进 YAML 并落盘。
+        try:
+            current_raw = yaml.safe_load(
+                self._config_path.read_text(encoding="utf-8")
+                if self._config_path.is_file()
+                else ""
+            )
+        except (OSError, yaml.YAMLError):
+            current_raw = {}
+        _restore_secrets(new_data, current_raw if isinstance(current_raw, dict) else {})
         try:
             def _write() -> tuple[str, list[str]]:
                 backup = self._config_path.read_text(encoding="utf-8")[:200] if self._config_path.is_file() else ""
@@ -459,8 +483,8 @@ class WebUIServer:
         if km is None:
             return web.json_response({"ok": True, "stats": None, "docs": [], "total": 0})
         try:
-            limit = min(int(request.query.get("limit", 20) or 20), 200)
-            offset = max(int(request.query.get("offset", 0) or 0), 0)
+            limit = _safe_int(request.query.get("limit"), 20, lo=1, hi=200)
+            offset = _safe_int(request.query.get("offset"), 0, lo=0)
             docs = sorted(km._docs or [], key=lambda d: d.get("created_at", 0), reverse=True)
             page = [
                 {
@@ -545,7 +569,9 @@ class WebUIServer:
         if not query:
             return web.json_response({"ok": False, "error": "检索词为空"}, status=400)
         result = await km.search(
-            query, str(data.get("category", "") or "") or None, int(data.get("limit", 3) or 3)
+            query,
+            str(data.get("category", "") or "") or None,
+            _safe_int(data.get("limit"), 3, lo=1, hi=50),
         )
         return web.json_response({"ok": True, "result": result})
 
@@ -669,8 +695,11 @@ class WebUIServer:
         try:
             from ..main import _plugin_dirs
 
+            # reload_from_directory 内部会先 unload_external,多目录时先统一卸载
+            # 再逐个加载,避免后一个目录卸载掉前一个目录刚加载的插件。
+            registry.unload_external()
             for plugin_dir in _plugin_dirs():
-                await registry.reload_from_directory(plugin_dir)
+                await registry.load_from_directory(plugin_dir)
             return web.json_response(
                 {"ok": True, "plugins": len(registry.plugin_metadata()), "handlers": registry.handler_count()}
             )
@@ -681,9 +710,18 @@ class WebUIServer:
     # ---------- 聊天 ----------
 
     async def _chat_ws(self, request: web.Request) -> web.WebSocketResponse:
-        if not self._check_auth(request):
+        # 浏览器 WebSocket 无法携带 Authorization 头,改用子协议传递 token:
+        # 前端 new WebSocket(url, ["chat", "auth.<token>"])
+        self._prune_tokens()
+        proto = request.headers.get("Sec-WebSocket-Protocol", "")
+        token = ""
+        for part in proto.split(","):
+            part = part.strip()
+            if part.startswith("auth."):
+                token = part[len("auth.") :]
+        if not token or self._tokens.get(token, 0) < time.time():
             return web.Response(status=401, text="Unauthorized")
-        ws = web.WebSocketResponse()
+        ws = web.WebSocketResponse(protocols=["chat"])
         await ws.prepare(request)
         engine = self._deps.get("engine")
         async for msg in ws:
