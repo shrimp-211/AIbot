@@ -130,6 +130,8 @@ async def compress_messages(
     - 保留最近 keep_recent 条
     - 若 do_summarize 且 provider 可用,将旧消息交给 LLM 生成摘要
     - 否则直接截断
+    - 输出统一过 `_normalize`:修复 tool 配对,并保证 system 后紧跟 user
+      (部分 API 强制要求,参照 AstrBot ContextTruncator._ensure_user_message)
     """
     if not messages:
         return messages
@@ -142,6 +144,7 @@ async def compress_messages(
     if not old:
         return messages
 
+    merged: list[dict] | None = None
     if do_summarize:
         try:
             raw = "\n".join(
@@ -161,19 +164,24 @@ async def compress_messages(
             )
             summary = (result.get("content") or "").strip()
             if summary:
-                return fix_messages(
-                    [
-                        {
-                            "role": "system",
-                            "content": f"[历史对话摘要] {summary}",
-                        }
-                    ]
-                    + recent
-                )
+                merged = [
+                    {
+                        "role": "system",
+                        "content": f"[历史对话摘要] {summary}",
+                    }
+                ] + recent
         except Exception:  # noqa: BLE001
             pass
 
-    return fix_messages(recent)
+    if merged is None:
+        merged = recent
+    return _normalize(merged, messages)
+
+
+def _normalize(merged: list[dict], original: list[dict]) -> list[dict]:
+    """修复 tool 配对 + 保证 system 后紧跟 user(参照 AstrBot ContextTruncator)。"""
+    system, rest = _split_system_rest(merged)
+    return fix_messages(_ensure_user_message(system, rest, original))
 
 
 def compress_tool_result(result: str, limit: int = 4000, max_chars: int = 12000) -> str:

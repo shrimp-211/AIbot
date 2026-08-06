@@ -381,6 +381,31 @@ async def test_truncate_turns_halving():
     assert half[-1]["content"] == "a5", half
 
 
+async def test_compress_ensure_user():
+    """机制 B:压缩后 system 摘要后必须紧跟 user,且 tool 配对完整。"""
+    from src.agent.compressor import compress_messages
+
+    class _SummaryProvider:
+        async def chat(self, messages, system_prompt=None, tools=None, **kwargs):
+            return {"content": "摘要内容", "tool_calls": []}
+
+    msgs = [{"role": "user", "content": "x" * 10} for _ in range(50)]
+    msgs.append(
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "1", "function": {"name": "bash", "arguments": "{}"}}],
+        }
+    )
+    msgs.append({"role": "tool", "tool_call_id": "1", "content": "ok"})
+    out = await compress_messages(
+        _SummaryProvider(), msgs, max_tokens=50, keep_recent=2
+    )
+    assert out[0]["role"] == "system", out
+    assert out[1]["role"] == "user", out  # system 后紧跟 user
+    assert any(m.get("role") == "tool" for m in out), out  # tool 配对保留
+
+
 async def test_repeated_tool_guidance():
     """机制 C:重复工具调用指导分级(>=3 提示,>=4 注意,>=5 警告)。"""
     from src.agent.engine import _repeated_tool_guidance
