@@ -53,7 +53,7 @@ class OpenAICompatibleProvider(BaseProvider):
         if tools:
             params["tools"] = [{"type": "function", "function": t} for t in tools]
 
-        resp = await self._client.chat.completions.create(**params)
+        resp = await self._with_retry(lambda: self._client.chat.completions.create(**params))
         choice = resp.choices[0]
         msg = choice.message
 

@@ -119,7 +119,7 @@ class AnthropicProvider(BaseProvider):
         if tools:
             params["tools"] = [self._convert_tool(t) for t in tools]
 
-        resp = await client.messages.create(**params)
+        resp = await self._with_retry(lambda: client.messages.create(**params))
 
         content_parts: list[str] = []
         tool_calls = []

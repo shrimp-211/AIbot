@@ -6,8 +6,11 @@ tool_calls 元素格式:
 """
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
+
+from loguru import logger
 
 # 模型 -> 上下文窗口(按模型名子串匹配,越长 key 越优先)
 _CONTEXT_WINDOWS: dict[str, int] = {
@@ -57,6 +60,63 @@ class BaseProvider(ABC):
         # 上下文窗口:配置显式覆盖优先,否则按模型名推断
         configured = int(config.get("context_window", 0) or 0)
         self.context_window = configured or estimate_context_window(self.model)
+        # 指数退避重试(网络抖动/限流/5xx 时自动重试)
+        retry_cfg = config.get("retry") or {}
+        self.max_attempts = max(
+            1, int(retry_cfg.get("max_attempts", config.get("max_retries", 3)) or 3)
+        )
+        self.retry_base_delay = float(retry_cfg.get("base_delay", 0.5) or 0.5)
+        self.retry_max_delay = float(retry_cfg.get("max_delay", 8.0) or 8.0)
+
+    # ---------- 重试 ----------
+
+    _RETRYABLE_CODES = frozenset((408, 429, 500, 502, 503, 504))
+
+    @classmethod
+    def _is_retryable(cls, exc: Exception) -> bool:
+        """判断异常是否可重试:限流/超时/5xx/传输层错误。"""
+        name = type(exc).__name__
+        if name in (
+            "RateLimitError",
+            "APITimeoutError",
+            "InternalServerError",
+            "BadGatewayError",
+            "ServiceUnavailableError",
+            "APIConnectionError",
+            "ConnectTimeout",
+            "ReadTimeout",
+            "TimeoutError",
+        ):
+            return True
+        code = getattr(exc, "status_code", None)
+        if code is not None:
+            return code in cls._RETRYABLE_CODES
+        # 传输层库异常兜底(httpx / aiohttp)
+        mod = type(exc).__module__ or ""
+        return "httpx" in mod or "aiohttp" in mod
+
+    async def _with_retry(self, fn):
+        """指数退避重试包装:base_delay * 2^i 递增,封顶 max_delay。"""
+        last_exc: Exception | None = None
+        for i in range(self.max_attempts):
+            try:
+                return await fn()
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if not self._is_retryable(exc) or i == self.max_attempts - 1:
+                    raise
+                delay = min(self.retry_base_delay * (2**i), self.retry_max_delay)
+                logger.warning(
+                    "{} 调用失败({}),{:.1f}s 后重试({}/{})",
+                    self.name,
+                    type(exc).__name__,
+                    delay,
+                    i + 1,
+                    self.max_attempts,
+                )
+                await asyncio.sleep(delay)
+        assert last_exc is not None
+        raise last_exc
 
     @abstractmethod
     async def chat(

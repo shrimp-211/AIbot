@@ -968,6 +968,80 @@ async def test_openai_reasoning_effort():
     assert p2._client.chat.completions.last_params.get("temperature") == p2.temperature
 
 
+async def test_provider_retry():
+    """provider 指数退避重试:限流可重试,耗尽抛错,非重试异常立即抛。"""
+    from src.providers.base import BaseProvider
+
+    class P(BaseProvider):
+        name = "test"
+
+        async def chat(self, messages, system_prompt=None, tools=None, **kwargs):
+            return {}
+
+        async def test(self):
+            return True
+
+    class RateLimit(Exception):
+        status_code = 429
+
+    # 首次失败(限流)重试后成功
+    p = P({"model": "m", "api_key": "k", "retry": {"max_attempts": 3, "base_delay": 0.01}})
+    calls = []
+
+    async def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RateLimit()
+        return "ok"
+
+    assert await p._with_retry(flaky) == "ok"
+    assert len(calls) == 2, "首次失败后应重试一次"
+
+    # 重试耗尽仍失败
+    p2 = P({"model": "m", "api_key": "k", "retry": {"max_attempts": 2, "base_delay": 0.01}})
+    calls2 = []
+
+    async def always_fail():
+        calls2.append(1)
+        raise RateLimit()
+
+    try:
+        await p2._with_retry(always_fail)
+        assert False, "应抛出异常"
+    except RateLimit:
+        pass
+    assert len(calls2) == 2, "重试次数应等于 max_attempts"
+
+    # 不可重试异常立即抛,不重试
+    p3 = P({"model": "m", "api_key": "k"})
+    calls3 = []
+
+    async def bad():
+        calls3.append(1)
+        raise ValueError("bad")
+
+    try:
+        await p3._with_retry(bad)
+        assert False, "不可重试异常应直接抛出"
+    except ValueError:
+        pass
+    assert len(calls3) == 1
+
+    # _is_retryable 分类
+    assert BaseProvider._is_retryable(RateLimit())
+    assert not BaseProvider._is_retryable(ValueError("x"))
+    class _ConnErr(Exception):
+        pass
+
+    _ConnErr.__module__ = "httpx"
+    assert BaseProvider._is_retryable(_ConnErr())
+    class _Timeout(Exception):
+        pass
+
+    _Timeout.__name__ = "ReadTimeout"
+    assert BaseProvider._is_retryable(_Timeout())
+
+
 async def run_all() -> bool:
     tests = [
         v
