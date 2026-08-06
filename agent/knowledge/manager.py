@@ -49,9 +49,16 @@ class KnowledgeManager:
         for d in self._docs:
             self._doc_by_id[d["id"]] = d
         for c in self._load_list(self.chunks_path):
-            self._chunks[c["id"]] = c
-            self._by_vec[c["vec_id"]] = c["id"]
-            self._vec_counter = max(self._vec_counter, int(c["vec_id"]) + 1)
+            # 数据损坏容错:缺 id/vec_id 或 vec_id 非法的块跳过,不阻塞启动
+            if not isinstance(c, dict) or not c.get("id") or c.get("vec_id") is None:
+                logger.warning("跳过损坏的 chunk 记录: {}", c)
+                continue
+            try:
+                self._chunks[c["id"]] = c
+                self._by_vec[int(c["vec_id"])] = c["id"]
+                self._vec_counter = max(self._vec_counter, int(c["vec_id"]) + 1)
+            except (TypeError, ValueError):
+                logger.warning("跳过 vec_id 非法的 chunk: {}", c.get("id"))
         self._lock = asyncio.Lock()
 
     # ---------- 内部 ----------
