@@ -53,11 +53,21 @@ class ImageGenerator:
         _ensure_dir(output_dir)
 
     async def generate(self, prompt: str, size: str = "1024x1024") -> str:
-        """生成图片,返回本地文件路径。"""
+        """生成图片,返回本地文件路径。
+
+        适配度保障:主后端(openai)失败或无 Key 时,自动回退免费后端 pollinations,
+        保证图片生成在无任何付费 Key 的环境下仍可用。
+        """
         if not (prompt or "").strip():
             raise RuntimeError("图片生成需要 prompt 描述")
-        if self.backend == "openai":
-            return await self._generate_openai(prompt, size)
+        primary = self._generate_openai if self.backend == "openai" else None
+        if primary is not None:
+            try:
+                return await primary(prompt, size)
+            except RuntimeError as exc:
+                logger.warning("openai 图片生成失败,回退 pollinations: {}", exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("openai 图片生成异常,回退 pollinations: {}", exc)
         return await self._generate_pollinations(prompt, size)
 
     async def _generate_openai(self, prompt: str, size: str) -> str:

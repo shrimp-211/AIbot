@@ -34,6 +34,13 @@ from .qq_admin import (
 )
 from .qq_info import QqFriendListTool, QqGroupInfoTool, QqGroupListTool, QqStrangerInfoTool
 from .qq_message import QqRecallTool, QqSendImageTool, QqSendLikeTool, QqSendVoiceTool
+from .qq_social_tools import (
+    QqOcrTool,
+    QqSendDiceTool,
+    QqSendEmojiTool,
+    QqSendMusicTool,
+    QqSendPokeTool,
+)
 from .skill_tools import SkillListTool, SkillStopTool, SkillUseTool
 from .subagent_tools import SubagentTool
 from .system import AskUserTool, BashTool, CronTool
@@ -73,6 +80,11 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         QqGroupListTool(),
         QqFriendListTool(),
         QqStrangerInfoTool(),
+        QqSendPokeTool(),
+        QqSendEmojiTool(),
+        QqSendDiceTool(),
+        QqSendMusicTool(),
+        QqOcrTool(),
         SkillListTool(),
         SkillUseTool(),
         SkillStopTool(),

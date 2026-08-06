@@ -267,12 +267,51 @@ def create_tts_provider(config: dict[str, Any]) -> TTSProvider:
     raise ValueError(f"未知 TTS Provider: {ptype}")
 
 
+class ChainedEmbeddingProvider(EmbeddingProvider):
+    """多后端 Embedding 链:按序尝试,前一个失败自动切换到下一个。
+
+    适配度保障:openai 无 Key/网络失败时自动回退本地 sentence-transformers,
+    保证向量能力在任意环境下可用。
+    """
+
+    name = "chained"
+
+    def __init__(self, providers: list[EmbeddingProvider]):
+        super().__init__({})
+        self.providers = [p for p in providers if p is not None]
+
+    async def embed(self, texts: list[str], **kwargs: Any) -> list[list[float]]:
+        last_exc: Exception | None = None
+        for p in self.providers:
+            try:
+                return await p.embed(texts, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                logger.warning("Embedding 后端 {} 失败: {}", type(p).__name__, exc)
+        raise RuntimeError(f"所有 Embedding 后端均失败: {last_exc}")
+
+    async def test(self) -> bool:
+        # 只测主后端(本地后端 test 会触发模型下载,较重)
+        if not self.providers:
+            return False
+        try:
+            return bool(await self.providers[0].test())
+        except Exception:  # noqa: BLE001
+            return False
+
+
 def create_embedding_provider(config: dict[str, Any]) -> EmbeddingProvider:
     ptype = (config or {}).get("type", "openai")
     if ptype in ("openai", "openai_compatible"):
         from .sources.embedding_openai import OpenAIEmbeddingProvider
 
-        return OpenAIEmbeddingProvider(config or {})
+        openai_p = OpenAIEmbeddingProvider(config or {})
+        # 默认开启本地回退,增强适配度;显式 fallback_local: false 可关闭
+        if (config or {}).get("fallback_local", True):
+            from .sources.embedding_local import LocalEmbeddingProvider
+
+            return ChainedEmbeddingProvider([openai_p, LocalEmbeddingProvider({})])
+        return openai_p
     if ptype in ("local", "sentence-transformers", "sentence_transformers"):
         from .sources.embedding_local import LocalEmbeddingProvider
 

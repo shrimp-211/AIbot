@@ -39,31 +39,68 @@ def classify_media(path: str) -> str:
 
 
 class ImagePerceiver:
-    """图片理解:OCR + 视觉问答。
+    """图片理解:OCR(多后端自动降级)+ 视觉问答。
 
-    - OCR: 优先 pytesseract,缺失则提示
-    - 视觉问答: 经 LLM vision API(由外部传入的 analyzer 回调完成)
+    - OCR: pytesseract → PaddleOCR → 报错(适配未装某库的环境)
+    - 视觉问答: 经 LLM vision API(由外部传入的 analyzer 回调完成);
+      无视觉模型时自动降级为 OCR 提取画面文字(返回原文并标注)。
     """
 
     async def ocr(self, image_path: str, lang: str = "chi_sim+eng") -> str:
+        """OCR 识别文字。多后端按可用性自动降级:pytesseract → PaddleOCR。"""
+        text = await self._ocr_pytesseract(image_path, lang)
+        if text:
+            return text
+        text = await self._ocr_paddle(image_path)
+        if text:
+            return text
+        return ""
+
+    @staticmethod
+    async def _ocr_pytesseract(image_path: str, lang: str) -> str:
         try:
             import pytesseract
             from PIL import Image
-        except ImportError as exc:
-            raise RuntimeError(
-                "图片 OCR 需要 pytesseract + Pillow(pip install pytesseract pillow),"
-                "且本机需安装 Tesseract OCR"
-            ) from exc
-
-        def _run() -> str:
-            img = Image.open(image_path)
-            return (pytesseract.image_to_string(img, lang=lang) or "").strip()
-
+        except ImportError:
+            return ""
         try:
+
+            def _run() -> str:
+                img = Image.open(image_path)
+                return (pytesseract.image_to_string(img, lang=lang) or "").strip()
+
             return await asyncio.to_thread(_run)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("OCR 失败: {}", exc)
-            raise RuntimeError(f"OCR 识别失败: {exc}") from exc
+            logger.warning("pytesseract OCR 失败: {}", exc)
+            return ""
+
+    @staticmethod
+    async def _ocr_paddle(image_path: str) -> str:
+        try:
+            from paddleocr import PaddleOCR
+        except ImportError:
+            return ""
+        try:
+
+            def _run() -> str:
+                ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+                result = ocr.ocr(image_path, cls=True)
+                lines: list[str] = []
+                for page in result or []:
+                    if not page:
+                        continue
+                    for item in page:
+                        txt = (item or [None, None])[1]
+                        if isinstance(txt, tuple) and txt:
+                            lines.append(str(txt[0]))
+                        elif txt:
+                            lines.append(str(txt))
+                return "\n".join(lines).strip()
+
+            return await asyncio.to_thread(_run)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PaddleOCR 失败: {}", exc)
+            return ""
 
     async def describe(
         self,
@@ -71,11 +108,18 @@ class ImagePerceiver:
         question: str = "请详细描述这张图片的内容。",
         analyzer=None,
     ) -> str:
-        """视觉问答。analyzer 负责把图片路径+问题交给多模态 LLM。"""
+        """视觉问答。analyzer 负责把图片路径+问题交给多模态 LLM。
+
+        适配度保障:analyzer 缺失(无视觉模型)时,降级为 OCR 提取画面文字,
+        保证"至少能读图",而非直接报错。
+        """
         if analyzer is None:
+            text = await self.ocr(image_path)
+            if text:
+                return f"(当前模型无图像能力,已用 OCR 提取画面文字)\n{text}"
             raise RuntimeError(
-                "视觉问答需要配置支持图像输入的 LLM(可用 vision_analyze 工具,"
-                "或配置 provider 支持图像)。当前模型无图像能力。"
+                "当前模型无图像能力,且本机未装 OCR 引擎"
+                "(pytesseract / PaddleOCR 至少其一,或配置支持图像的 LLM)。"
             )
         return await analyzer(image_path, question)
 

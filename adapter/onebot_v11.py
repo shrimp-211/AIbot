@@ -365,3 +365,61 @@ class OneBotV11Adapter(TaskTrackerMixin, ReverseServerMixin, BaseAdapter):
         return await self.call_api(
             "get_group_files_by_folder", group_id=int(group_id), folder_id=folder_id
         )
+
+    # ---------- NapCat / go-cqhttp 扩展 API ----------
+    # 依据 doc.napneko.icu(官方文档):NapCat 在 OneBot v11 规范之上扩展了
+    # 互动类(poke/emoji_like)、身份类(nc_get_rkey)、文件类等 action。
+    # 上层工具按需调用,未实现该 API 的实现端会抛出清晰错误(适配度保障)。
+
+    async def group_poke(self, group_id: str | int, user_id: str | int) -> Any:
+        """戳一戳群成员(NapCat 扩展:group_poke)。"""
+        return await self.call_api("group_poke", group_id=int(group_id), user_id=int(user_id))
+
+    async def friend_poke(self, user_id: str | int) -> Any:
+        """戳一戳好友(NapCat 扩展:friend_poke)。"""
+        return await self.call_api("friend_poke", user_id=int(user_id))
+
+    async def set_msg_emoji_like(
+        self, message_id: int, emoji_id: int = 307, set_msg: bool = True
+    ) -> Any:
+        """对消息添加表情回应(NapCat 扩展:set_msg_emoji_like)。
+
+        emoji_id 见 NapCat 表情枚举,307=爱心,322=赞,21=大笑等。
+        """
+        return await self.call_api(
+            "set_msg_emoji_like", message_id=int(message_id), emoji_id=int(emoji_id), set_msg=set_msg
+        )
+
+    async def ocr_image(self, image: str) -> Any:
+        """图片 OCR(go-cqhttp 扩展:ocr_image),返回文本 + 文字坐标框。"""
+        return await self.call_api("ocr_image", image=image)
+
+    async def get_forward_msg(self, message_id: int) -> Any:
+        """获取合并转发消息详情(go-cqhttp 扩展)。"""
+        return await self.call_api("get_forward_msg", message_id=int(message_id))
+
+    async def send_private_forward_msg(self, user_id: str | int, messages: list[dict]) -> Any:
+        """发送私聊合并转发(go-cqhttp 扩展)。"""
+        return await self.call_api(
+            "send_private_forward_msg", user_id=int(user_id), messages=messages
+        )
+
+    async def download_file(self, url: str, thread_count: int = 3, headers: str = "") -> Any:
+        """下载文件到 NapCat 本地(go-cqhttp 扩展:download_file)。"""
+        return await self.call_api(
+            "download_file", url=url, thread_count=int(thread_count), headers=headers
+        )
+
+    async def set_group_card(self, group_id: str | int, user_id: str | int, card: str = "") -> Any:
+        """设置群名片(OneBot v11 标准 API)。"""
+        return await self.call_api(
+            "set_group_card", group_id=int(group_id), user_id=int(user_id), card=card
+        )
+
+    async def get_msg(self, message_id: int) -> Any:
+        """获取单条消息详情(OneBot v11 标准 API)。"""
+        return await self.call_api("get_msg", message_id=int(message_id))
+
+    async def send_group_sign(self, group_id: str | int) -> Any:
+        """群签到(NapCat 扩展:send_group_sign)。"""
+        return await self.call_api("send_group_sign", group_id=int(group_id))
