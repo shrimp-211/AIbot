@@ -210,6 +210,19 @@ sandbox:
   result_limit: 4000        # 工具结果超此字符数自动落盘到 data/tool_results/
   shell_backend: local      # local(子进程) | docker(需安装 docker,缺失自动降级 local)
 
+# ---------- 统一 Webhook(I5) ----------
+# 单端口多平台事件上报:POST /webhook/<platform>
+webhook:
+  enabled: false
+  host: 127.0.0.1
+  port: 6196
+  path: /webhook
+  token: ""              # 与上报方一致,留空不鉴权
+
+# ---------- 渐进式存储(I5) ----------
+storage:
+  sqlmodel: false        # true = 启用 SQLModel(需 pip install sqlmodel),建表 + JsonKV 迁移
+
 # ---------- WebUI 控制台 ----------
 webui:
   enabled: true

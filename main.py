@@ -45,6 +45,7 @@ from .pipeline.stages import (
     WakeCheckStage,
 )
 from .plugins.registry import PluginRegistry
+from .agent.orchestrator import Orchestrator
 from .providers.base import (
     create_embedding_provider,
     create_provider,
@@ -647,6 +648,40 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         await driver.start()
     await adapter_registry.start_all()
 
+    # I5 多 API 编排器:从配置构建 provider 链,供 WebUI 展示与未来路由
+    orchestrator = Orchestrator([provider])
+    for fb in config.get("llm.provider.fallback_providers", []) or []:
+        try:
+            orchestrator.providers.append(create_provider(fb))
+        except Exception:  # noqa: BLE001
+            logger.warning("编排器备用 provider 构建失败: {}", fb)
+
+    # I5 统一 Webhook 服务器(单端口多平台事件上报)
+    webhook_cfg = config.get("webhook", {}) or {}
+    webhook_server: Any = None
+    if bool(webhook_cfg.get("enabled", False)):
+        from .adapter.webhook_server import WebhookServer
+
+        webhook_server = WebhookServer(
+            host=webhook_cfg.get("host", "127.0.0.1"),
+            port=int(webhook_cfg.get("port", 6196) or 6196),
+            path=webhook_cfg.get("path", "/webhook"),
+            token=str(webhook_cfg.get("token", "") or ""),
+        )
+        webhook_server.set_callback(pipeline.execute)
+        await webhook_server.start()
+
+    # I5 渐进式存储:SQLModel(可选,未装则跳过)
+    sqlmodel_engine = None
+    if config.get("storage.sqlmodel", False):
+        from .storage.models import init_sqlmodel
+        from .storage.migration import migrate_json_kv
+
+        sqlmodel_engine = init_sqlmodel(str(ROOT_DIR / "data" / "app.sqlite3"))
+        if sqlmodel_engine is not None:
+            migrated = migrate_json_kv(db, sqlmodel_engine)
+            logger.info("SQLModel 迁移: {}", migrated)
+
     webui: WebUIServer | None = None
     if config.get("webui.enabled", True):
         webui = WebUIServer(
@@ -657,6 +692,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
                 "engine": engine, "tools": tools, "cron": cron,
                 "plugin_registry": plugin_registry,
                 "adapter_registry": adapter_registry,
+                "orchestrator": orchestrator,
             },
             config_path=config_path,
         )
@@ -702,6 +738,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
 
     # 关闭
     await adapter_registry.stop_all()
+    if webhook_server is not None:
+        await webhook_server.stop()
     if driver is not None:
         await driver.stop()
     await cron.stop()

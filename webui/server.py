@@ -170,6 +170,7 @@ class WebUIServer:
         self._app.router.add_post("/api/knowledge/search", self._knowledge_search)
         self._app.router.add_get("/api/providers", self._providers)
         self._app.router.add_post("/api/providers/test", self._providers_test)
+        self._app.router.add_get("/api/orchestrator", self._orchestrator)
         self._app.router.add_get("/api/mcp", self._mcp_status)
         self._app.router.add_get("/api/skills", self._skills)
         self._app.router.add_get("/api/audit", self._audit)
@@ -650,6 +651,12 @@ class WebUIServer:
         return web.json_response({"ok": True, "results": results})
 
     # ---------- 定时任务 CRUD ----------
+
+    async def _orchestrator(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        orch = self._deps.get("orchestrator")
+        return web.json_response({"ok": True, "summary": orch.summary() if orch else {"providers": 0}})
 
     async def _tasks_add(self, request: web.Request) -> web.Response:
         if not self._check_auth(request):
