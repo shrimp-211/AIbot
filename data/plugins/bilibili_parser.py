@@ -1,6 +1,7 @@
 from __future__ import annotations
 import re, aiohttp
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 from src.security.auth import is_safe_url
 
 _API = "https://api.bilibili.com/x/web-interface/view"
@@ -27,5 +28,5 @@ def setup(registry) -> None:
         title = info.get("title", "未知")
         up = (info.get("owner") or {}).get("name", "未知")
         views = (info.get("stat") or {}).get("view", 0)
-        await event.reply(f"[B站] {title}\nUP: {up} | 播放: {views}")
+        await event.reply(f"[B站] {escape_cq(title)}\nUP: {escape_cq(up)} | 播放: {views}")
         return None

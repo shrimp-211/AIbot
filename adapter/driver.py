@@ -74,7 +74,6 @@ class ReverseDriver:
             self._site = None
         await self._runner.cleanup()
         self._started = False
-        self._registered.clear()
         logger.info("反向驱动已停止")
 
 

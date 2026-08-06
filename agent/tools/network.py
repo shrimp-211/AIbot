@@ -7,8 +7,11 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from ...security.auth import is_safe_url
+from ...security.auth import is_safe_url_async
 from .base import Tool, ToolContext
+
+_REDIRECT_STATUS = (301, 302, 303, 307, 308)
+_MAX_REDIRECTS = 5
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
 
@@ -118,16 +121,26 @@ class WebFetchTool(Tool):
     }
 
     async def execute(self, ctx: ToolContext, url: str, max_length: int = 8000) -> Any:
-        if not is_safe_url(url):
-            return {"error": "URL 不合法或指向内网地址,已被拦截"}
         try:
             async with httpx.AsyncClient(
-                timeout=20, follow_redirects=True, headers={"User-Agent": UA}
+                timeout=20, follow_redirects=False, headers={"User-Agent": UA}
             ) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                text = self._html_to_text(resp.text)
-                return text[: int(max_length or 8000)]
+                # 手动跟随重定向,每一跳都做 SSRF 校验,防止公网 URL 302 到内网
+                current = url
+                for _ in range(_MAX_REDIRECTS + 1):
+                    if not await is_safe_url_async(current):
+                        return {"error": "URL 不合法或指向内网地址,已被拦截"}
+                    resp = await client.get(current)
+                    if resp.status_code in _REDIRECT_STATUS:
+                        location = resp.headers.get("location")
+                        if not location:
+                            return {"error": "抓取失败: 重定向缺少 Location"}
+                        current = urljoin(current, location)
+                        continue
+                    resp.raise_for_status()
+                    text = self._html_to_text(resp.text)
+                    return text[: int(max_length or 8000)]
+                return {"error": f"抓取失败: 重定向超过 {_MAX_REDIRECTS} 次"}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"抓取失败: {exc}"}
 

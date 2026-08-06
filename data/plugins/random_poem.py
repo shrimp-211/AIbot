@@ -29,21 +29,16 @@ _LOCAL_POEMS = [
 ]
 
 
-_session: aiohttp.ClientSession | None = None
-
-
 def _local() -> str:
     line, src = random.choice(_LOCAL_POEMS)
     return f"{line}\n—— {src}"
 
 
 async def _fetch() -> str | None:
-    global _session
     try:
-        if _session is None:
-            _session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
-        async with _session.get(_API) as resp:
-            data = await resp.json(content_type=None)
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as _s:
+            async with _s.get(_API) as resp:
+                data = await resp.json(content_type=None)
         if data.get("status") == "success" and data.get("content"):
             origin = data.get("origin", "")
             author = data.get("author", "")

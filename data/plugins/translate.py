@@ -22,9 +22,6 @@ _LANG_ALIAS = {
 }
 _DEFAULT_TO = "zh"
 
-# 模块级共享 session(惰性创建,进程退出时关闭;复用连接减少开销)
-_session: aiohttp.ClientSession | None = None
-
 
 def _normalize_lang(token: str) -> str | None:
     token = token.strip().lower()
@@ -46,12 +43,10 @@ def _parse_gtx(data) -> str:
 
 
 async def _translate(text: str, to: str) -> str:
-    global _session
-    if _session is None:
-        _session = aiohttp.ClientSession()
     params = {"client": "gtx", "sl": "auto", "tl": to, "dt": "t", "q": text}
-    async with _session.get(_API, params=params, timeout=15) as resp:
-        data = await resp.json(content_type=None)
+    async with aiohttp.ClientSession() as _s:
+        async with _s.get(_API, params=params, timeout=15) as resp:
+            data = await resp.json(content_type=None)
     return _parse_gtx(data) or "翻译结果为空。"
 
 

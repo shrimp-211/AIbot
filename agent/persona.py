@@ -1,6 +1,7 @@
 """多人格系统:独立 system_prompt + 工具白名单 + 会话级切换(热切换)。"""
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -9,7 +10,9 @@ class PersonaManager:
     def __init__(self, db: Any, default_prompt: str = "你是 QQ 群里的智能 AI 助手,乐于助人。"):
         self._db = db
         self._default_prompt = default_prompt
-        self._session_personas: dict[str, str] = {}  # session_id -> persona_id
+        # session_id -> {"persona": persona_id, "ts": 切换时间}
+        self._session_personas: dict[str, dict] = {}
+        self._access_count = 0
 
     # ---------- CRUD ----------
 
@@ -64,7 +67,7 @@ class PersonaManager:
             self._db.set("personas", personas)
         # 清理会话引用
         self._session_personas = {
-            k: v for k, v in self._session_personas.items() if v != persona_id
+            k: v for k, v in self._session_personas.items() if v.get("persona") != persona_id
         }
         return {"ok": True}
 
@@ -76,12 +79,24 @@ class PersonaManager:
             return {"ok": True, "message": "已恢复默认人格"}
         if self.get(persona_id) is None:
             return {"error": f"人格不存在: {persona_id}"}
-        self._session_personas[session_id] = persona_id
+        self._session_personas[session_id] = {"persona": persona_id, "ts": time.time()}
         p = self.get(persona_id)
         return {"ok": True, "message": f"已切换到人格: {p.get('name', persona_id)}"}
 
+    def _maybe_prune(self) -> None:
+        """摊销清理:每 128 次访问清理超过 24h 未再切换的会话绑定。"""
+        self._access_count += 1
+        if self._access_count % 128 != 0:
+            return
+        now = time.time()
+        stale = [sid for sid, e in self._session_personas.items() if now - e.get("ts", 0) > 86400]
+        for sid in stale:
+            self._session_personas.pop(sid, None)
+
     def get_prompt(self, session_id: str) -> str:
-        pid = self._session_personas.get(session_id)
+        self._maybe_prune()
+        entry = self._session_personas.get(session_id)
+        pid = entry.get("persona") if entry else None
         if pid:
             p = self.get(pid)
             if p and p.get("system_prompt"):
@@ -89,7 +104,9 @@ class PersonaManager:
         return self._default_prompt
 
     def get_tool_allowlist(self, session_id: str) -> list[str] | None:
-        pid = self._session_personas.get(session_id)
+        self._maybe_prune()
+        entry = self._session_personas.get(session_id)
+        pid = entry.get("persona") if entry else None
         if pid:
             p = self.get(pid)
             if p:

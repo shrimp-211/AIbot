@@ -11,6 +11,7 @@ import random
 import re
 
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 
 _FORTUNE = [
     ("大吉", "🌟 今天运气爆棚,做什么都顺利!"),
@@ -30,7 +31,7 @@ def setup(registry) -> None:
     async def fortune(event: AgentEvent):
         level, desc = random.choice(_FORTUNE)
         name = event.sender_name or event.user_id
-        await event.reply(f"🎴 {name} 的今日签:【{level}】\n{desc}")
+        await event.reply(f"🎴 {escape_cq(name)} 的今日签:【{level}】\n{desc}")
         return None
 
     @registry.command("roll")

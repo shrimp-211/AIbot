@@ -8,6 +8,8 @@ import fnmatch
 from collections import defaultdict
 from typing import Any, Awaitable, Callable
 
+from loguru import logger
+
 HOOK_EVENTS = (
     "user_prompt_submit",
     "pre_tool_use",
@@ -46,6 +48,11 @@ class HookManager:
             try:
                 result = await handler(**kwargs)
             except Exception:  # noqa: BLE001
+                if event == "pre_tool_use":
+                    # 安全钩子失败按拦截处理(fail-closed),防止漏放危险操作
+                    logger.exception("pre_tool_use 钩子执行失败,已拦截工具调用")
+                    return "block"
+                logger.exception("钩子 {} 执行失败", event)
                 continue
             if result == "block":
                 return "block"

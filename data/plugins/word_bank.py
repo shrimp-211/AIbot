@@ -47,10 +47,11 @@ def setup(registry) -> None:
             await event.reply("没学过这个问题。")
         return None
 
-    @registry.regex(r"^[^/!].+")  # 非命令消息尝试匹配问答
+    @registry.regex(r"^[^/!].+", block=False)  # 命中问答才回复,不阻断后续 AI 处理
     async def match_bank(event: AgentEvent, db: JsonKV):
         text = event.plain_text.strip()
         bank = db.get(_KEY) or {}
         if text in bank:
             await event.reply(escape_cq(bank[text]))
-        return None
+            return True
+        return False

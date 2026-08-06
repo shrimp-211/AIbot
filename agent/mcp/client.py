@@ -118,6 +118,8 @@ class MCPServer:
                 params = msg.get("params", {})
                 logger.info("MCP %s 日志[%s]: %s", self.name, params.get("level"), params.get("message", ""))
                 self._log_lines.append(str(params.get("message", "")))
+                if len(self._log_lines) > 200:
+                    self._log_lines = self._log_lines[-200:]
 
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         self._write({"jsonrpc": "2.0", "method": method, "params": params})

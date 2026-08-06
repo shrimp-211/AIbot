@@ -79,6 +79,24 @@ class SessionControl:
             await event.reply(str(result))
         return True
 
+    # ---------- 公开 API ----------
+
+    def schedule(
+        self,
+        sid: str,
+        func: Callable[..., Awaitable[Any]],
+        awaiting_key: str,
+        data: dict[str, Any],
+        ttl: int | None = None,
+    ) -> None:
+        """登记一个待恢复的多轮会话:下次同会话消息触发 dispatch 继续执行。"""
+        self._pending[sid] = {
+            "func": func,
+            "awaiting_key": awaiting_key,
+            "data": data,
+            "expire": time.time() + (ttl if ttl is not None else self._ttl),
+        }
+
     # ---------- 装饰器 ----------
 
     def got(self, key: str, prompt: str | None = None):

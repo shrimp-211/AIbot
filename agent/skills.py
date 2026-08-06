@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -106,8 +107,10 @@ class SkillRegistry:
 
     def __init__(self, extra_dirs: list[str] | None = None):
         self._skills: dict[str, Skill] = {}
-        self._active: dict[str, str] = {}  # session_id -> skill_name
+        # session_id -> {"name": skill_name, "ts": 激活时间}
+        self._active: dict[str, dict] = {}
         self._extra_dirs = extra_dirs or []
+        self._access_count = 0
 
     def load_directory(self, path: str | Path) -> int:
         """扫描目录下所有 .md 技能文件,返回加载数量。"""
@@ -147,16 +150,29 @@ class SkillRegistry:
         skill = self._skills.get(name)
         if skill is None:
             return {"error": f"技能不存在: {name}"}
-        self._active[session_id] = name
+        self._active[session_id] = {"name": name, "ts": time.time()}
         return {"ok": True, "skill": name, "description": skill.description}
 
     def deactivate(self, session_id: str) -> dict:
         was = self._active.pop(session_id, None)
-        return {"ok": True, "skill": was} if was else {"ok": True, "message": "当前无激活技能"}
+        if was:
+            return {"ok": True, "skill": was["name"]}
+        return {"ok": True, "message": "当前无激活技能"}
 
     def active(self, session_id: str) -> Skill | None:
-        name = self._active.get(session_id)
-        return self._skills.get(name) if name else None
+        self._maybe_prune()
+        entry = self._active.get(session_id)
+        return self._skills.get(entry["name"]) if entry else None
+
+    def _maybe_prune(self) -> None:
+        """摊销清理:每 128 次访问清理超过 24h 未再激活的会话技能绑定。"""
+        self._access_count += 1
+        if self._access_count % 128 != 0:
+            return
+        now = time.time()
+        stale = [sid for sid, e in self._active.items() if now - e.get("ts", 0) > 86400]
+        for sid in stale:
+            self._active.pop(sid, None)
 
     # ---------- 文本自动匹配 ----------
 

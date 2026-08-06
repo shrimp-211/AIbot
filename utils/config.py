@@ -218,15 +218,18 @@ def validate_config(data: dict[str, Any]) -> list[str]:
     def _check(section: str, value: Any, rule: dict) -> None:
         expected = rule.get("type")
         if expected is not None:
-            if isinstance(expected, tuple):
-                ok = isinstance(value, expected)
-            else:
-                ok = isinstance(value, expected)
-            if not ok and value is not None:
+            ok = isinstance(value, expected)
+            if value is None:
+                # null 绕过校验会在运行时 int(None) 崩溃,一律视为非法
+                errors.append(f"{section}: 不能为 null")
+                return
+            if isinstance(value, bool) and expected in (int, float):
+                # bool 是 int 子类,显式拒绝 port:true 之类误写
+                errors.append(f"{section}: 期望类型 {expected.__name__},实际 bool")
+                return
+            if not ok:
                 errors.append(f"{section}: 期望类型 {expected.__name__},实际 {type(value).__name__}")
                 return
-        if isinstance(value, bool) and expected is bool:
-            pass
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             if "min" in rule and value < rule["min"]:
                 errors.append(f"{section}: 不能小于 {rule['min']}(当前 {value})")

@@ -36,8 +36,8 @@ def setup(registry) -> None:
             await event.reply("用法: /删 <key>")
             return None
         full = _prefix(event, key)
-        if db.get(full) is not None:
-            db.set(full, None)
+        if db.has(full):
+            db.delete(full)
             await event.reply(f"已删 {escape_cq(key)}")
         else:
             await event.reply(f"键 {escape_cq(key)} 不存在")

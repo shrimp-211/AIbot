@@ -67,7 +67,14 @@ def _verify_pbkdf2(password: str, stored: str) -> bool:
 
 
 class WebUIServer:
-    def __init__(self, config: Config, host: str = "127.0.0.1", port: int = 8080, deps: dict | None = None):
+    def __init__(
+        self,
+        config: Config,
+        host: str = "127.0.0.1",
+        port: int = 8080,
+        deps: dict | None = None,
+        config_path: str | Path | None = None,
+    ):
         self._config = config
         self._host = host
         self._port = port
@@ -78,10 +85,16 @@ class WebUIServer:
         self._tokens: dict[str, float] = {}
         self._password = ""
         self._password_hash = ""
-        # 可读写配置
-        self._config_path = ROOT_DIR / "src" / "config.yaml"
+        # 可读写配置:优先用启动时的 -c 路径,避免自定义路径下编辑失效
+        self._config_path = Path(config_path) if config_path else Path(config._path or ROOT_DIR / "src" / "config.yaml")
         self._setup_auth()
         self._setup_routes()
+
+    def _prune_tokens(self) -> None:
+        now = time.time()
+        expired = [t for t, exp in self._tokens.items() if exp < now]
+        for t in expired:
+            self._tokens.pop(t, None)
 
     def _setup_auth(self) -> None:
         ph = self._config.get("webui.password_hash", "")
@@ -130,6 +143,7 @@ class WebUIServer:
     # ---------- 认证 ----------
 
     def _check_auth(self, request: web.Request) -> bool:
+        self._prune_tokens()
         token = request.headers.get("Authorization", "").removeprefix("Bearer ")
         expire = self._tokens.get(token, 0)
         if expire < time.time():
@@ -148,6 +162,7 @@ class WebUIServer:
             ok = _verify_pbkdf2(password, self._password_hash)
         if not ok:
             return web.json_response({"ok": False, "error": "密码错误"}, status=401)
+        self._prune_tokens()
         token = secrets.token_hex(32)
         self._tokens[token] = time.time() + 24 * 3600
         return web.json_response({"ok": True, "token": token})
@@ -156,7 +171,11 @@ class WebUIServer:
 
     async def _index(self, request: web.Request) -> web.Response:
         index = STATIC_DIR / "index.html"
-        content = index.read_text(encoding="utf-8") if index.exists() else "WebUI"
+
+        def _read() -> str:
+            return index.read_text(encoding="utf-8") if index.exists() else "WebUI"
+
+        content = await asyncio.to_thread(_read)
         return web.Response(text=content, content_type="text/html", charset="utf-8")
 
     # ---------- API ----------
@@ -235,9 +254,8 @@ class WebUIServer:
         if not self._check_auth(request):
             return web.json_response({"ok": False, "error": "未授权"}, status=401)
         audit_path = ROOT_DIR / "data" / "audit.jsonl"
-        return web.json_response(
-            {"ok": True, "audit": _tail_jsonl(audit_path, limit=200)}
-        )
+        audit = await asyncio.to_thread(_tail_jsonl, audit_path, 200)
+        return web.json_response({"ok": True, "audit": audit})
 
     async def _subagents(self, request: web.Request) -> web.Response:
         if not self._check_auth(request):
@@ -313,7 +331,9 @@ class WebUIServer:
         if not self._check_auth(request):
             return web.json_response({"ok": False, "error": "未授权"}, status=401)
         try:
-            content = self._config_path.read_text(encoding="utf-8") if self._config_path.is_file() else ""
+            content = await asyncio.to_thread(
+                lambda: self._config_path.read_text(encoding="utf-8") if self._config_path.is_file() else ""
+            )
         except OSError:
             content = ""
         return web.json_response({"ok": True, "content": content, "path": str(self._config_path)})
@@ -341,10 +361,12 @@ class WebUIServer:
                 {"ok": False, "error": "配置校验失败", "errors": errors[:20]}, status=400
             )
         try:
-            backup = self._config_path.read_text(encoding="utf-8")[:200] if self._config_path.is_file() else ""
-            save_config(self._config_path, new_data)
-            # 热重载:更新内存中的配置对象(惰性读取的组件立即生效)
-            reload_errors = self._config.reload()
+            def _write() -> tuple[str, list[str]]:
+                backup = self._config_path.read_text(encoding="utf-8")[:200] if self._config_path.is_file() else ""
+                save_config(self._config_path, new_data)
+                return backup, self._config.reload()
+
+            backup, reload_errors = await asyncio.to_thread(_write)
             logger.info("WebUI 已更新配置文件(校验通过,{} 条重载告警)", len(reload_errors))
         except OSError as exc:
             logger.exception("配置文件写入失败")

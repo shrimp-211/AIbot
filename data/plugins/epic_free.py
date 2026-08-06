@@ -17,7 +17,7 @@ def setup(registry) -> None:
             except Exception:
                 await event.reply("获取失败,稍后重试")
                 return None
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)  # aware,与 fromisoformat 一致
         games = []
         for item in data.get("data",{}).get("Catalog",{}).get("searchStore",{}).get("elements",[]):
             promos = (item.get("promotions") or {}).get("promotionalOffers", [])

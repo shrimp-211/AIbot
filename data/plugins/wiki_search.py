@@ -41,5 +41,5 @@ def setup(registry) -> None:
             await event.reply(f"「{escape_cq(title)}」暂无摘要")
             return None
         if len(extract) > 300: extract = extract[:300]+"..."
-        await event.reply(f"【{escape_cq(title)}】\n{extract}")
+        await event.reply(f"【{escape_cq(title)}】\n{escape_cq(extract)}")
         return None

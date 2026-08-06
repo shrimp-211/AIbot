@@ -9,9 +9,9 @@
 from __future__ import annotations
 
 import random
-import time
 
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 
 _IDIOMS = (
     "一心一意", "意犹未尽", "尽力而为", "为人师表", "表里如一", "一鸣惊人",
@@ -63,12 +63,7 @@ def _bot_reply(last_char: str, exclude: set[str]) -> str | None:
 
 def setup(registry) -> None:
     def _pending(sid: str, data: dict) -> None:
-        registry.sessions._pending[sid] = {
-            "func": _turn,
-            "awaiting_key": "word",
-            "data": data,
-            "expire": time.time() + _TTL,
-        }
+        registry.sessions.schedule(sid, _turn, "word", data, ttl=_TTL)
 
     async def _turn(event: AgentEvent, data: dict) -> None:
         word = (data.get("word") or "").strip()
@@ -77,7 +72,7 @@ def setup(registry) -> None:
             return None
         last = data.get("last", "")
         if word not in _IDIOMS:
-            await event.reply(f"「{word}」不在成语库中,再来一个试试?(要接「{last[-1]}」开头)")
+            await event.reply(f"「{escape_cq(word)}」不在成语库中,再来一个试试?(要接「{last[-1]}」开头)")
             _pending(event.session_id, data)
             return None
         if word[0] != last[-1]:

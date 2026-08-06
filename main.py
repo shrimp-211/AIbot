@@ -213,6 +213,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     # 存储
     db = JsonKV(ROOT_DIR / "data" / "agent.json")
     auth_db = JsonKV(ROOT_DIR / "data" / "auth.json")
+    await db.initialize()
+    await auth_db.initialize()
     db.start()
     auth_db.start()
 
@@ -353,6 +355,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
                 "plugin_registry": plugin_registry,
                 "adapter_registry": adapter_registry,
             },
+            config_path=config_path,
         )
         await webui.start()
 

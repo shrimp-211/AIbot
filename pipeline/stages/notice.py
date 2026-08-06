@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from loguru import logger
 
 from ...adapter.event import AgentEvent
+from ...adapter.message import escape_cq
 from ...utils.config import Config
 from ..scheduler import Stage
 
@@ -64,13 +65,14 @@ class NoticeStage(Stage):
                 return  # 机器人自己被拉入,不需要欢迎自己
             if self._cfg("welcome.enabled", True):
                 text = self._cfg("welcome.text", _WELCOME_DEFAULT)
-                await self._safe_reply(event, text.format(name=event.sender_name or event.user_id))
+                # 昵称来自不可信用户,格式化后整体转义防 CQ 注入
+                await self._safe_reply(event, escape_cq(text.format(name=event.sender_name or event.user_id)))
         elif ntype == "group_decrease":
             if event.user_id and event.user_id == self_id:
                 return  # 机器人自己被移出,无法播报
             if self._cfg("farewell.enabled", True):
                 text = self._cfg("farewell.text", _FAREWELL_DEFAULT)
-                await self._safe_reply(event, text.format(name=event.sender_name or event.user_id))
+                await self._safe_reply(event, escape_cq(text.format(name=event.sender_name or event.user_id)))
         elif ntype == "group_recall":
             await self._handle_recall(event)
         elif ntype in ("group_admin", "group_ban", "group_dismiss", "friend_add", "group_upload"):
@@ -96,7 +98,8 @@ class NoticeStage(Stage):
         name = snapshot.get("name") or "成员"
         fmt = self._cfg("anti_recall.format", _ANTI_RECALL_DEFAULT)
         try:
-            await adapter.send_group_msg(event.group_id, fmt.format(name=name, text=text))
+            # 撤回文本与昵称均来自不可信用户,整体转义防 CQ 注入
+            await adapter.send_group_msg(event.group_id, escape_cq(fmt.format(name=name, text=text)))
         except Exception:  # noqa: BLE001
             logger.exception("撤回拦截发送失败")
 

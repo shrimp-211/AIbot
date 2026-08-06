@@ -23,13 +23,7 @@ _KFC_POSTS = [
     "都说了今天疯狂星期四,怎么还没人 V 我 50?",
 ]
 
-_WEEKDAY_CN = {"一": "月", "二": "火", "三": "水", "四": "木", "五": "金", "六": "土", "日": "日"}
-_WEEKDAY_MAP = {
-    "四": ("木", "Thursday"), "四": ("木", "Thursday"),  # duplicate key will be overridden
-    "Thu": ("木", "Thursday"),
-}
 # jp→cn
-_JP_TO_CN: dict[str, str] = {"月": "一", "火": "二", "水": "三", "木": "四", "金": "五", "土": "六", "日": "日"}
 _JP_CN: dict[str, str] = {"月": "一", "火": "二", "水": "三", "木": "四", "金": "五", "土": "六", "日": "日"}
 _CN_JP: dict[str, str] = {"一": "月", "二": "火", "三": "水", "四": "木", "五": "金", "六": "土", "日": "日"}
 _CN_EN: dict[str, str] = {"一": "Monday", "二": "Tuesday", "三": "Wednesday", "四": "Thursday", "五": "Friday", "六": "Saturday", "日": "Sunday"}

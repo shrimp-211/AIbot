@@ -26,7 +26,7 @@ class BashTool(Tool):
     @staticmethod
     def _sandbox_wrap(command: str, workdir: str) -> str:
         """用 Docker 沙箱执行命令(参考 Codex/Gemini CLI 沙箱)。"""
-        vol = f"{os.path.abspath(workdir or '.')}:/workspace"
+        vol = shlex.quote(f"{os.path.abspath(workdir or '.')}:/workspace")
         inner = shlex.quote(command)
         return f"docker run --rm -v {vol} -w /workspace alpine sh -c {inner}"
 
@@ -147,7 +147,9 @@ class AskUserTool(Tool):
     }
 
     async def execute(self, ctx: ToolContext, question: str) -> Any:
-        await ctx.event.reply(f"🔎 我需要确认一下:{question}")
+        from ...adapter.message import escape_cq
+
+        await ctx.event.reply(f"🔎 我需要确认一下:{escape_cq(question)}")
         if ctx.memory is not None:
             ctx.memory.set_pending_question(ctx.event.session_id, question)
         return {

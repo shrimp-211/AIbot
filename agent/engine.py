@@ -499,9 +499,10 @@ class AgentEngine:
         except PermissionError as exc:
             logger.warning(f"权限拦截工具 {name}: {exc}")
             return f"权限不足: {exc}"
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception(f"工具 {name} 执行出错")
-            return f"工具执行出错: {type(exc).__name__}: {exc}"
+            # 不向模型泄漏异常细节(CLAUDE.md 安全规范 3)
+            return "工具执行出错,请查看服务端日志"
 
         if isinstance(result, str):
             return compress_tool_result(result)

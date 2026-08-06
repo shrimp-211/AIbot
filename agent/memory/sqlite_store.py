@@ -181,11 +181,14 @@ class SQLiteStore:
             if cand_ids:
                 conds.append(f"m.id IN ({','.join('?' * len(cand_ids))})")
                 params.extend(cand_ids)
-            # 无候选时回退到 LIKE(容错)
-
-        # LIKE 兜底:精确子串(覆盖 2 字符中文等 FTS 盲区)
-        conds.append("m.content LIKE ?")
-        params.append(f"%{query}%")
+            else:
+                # FTS 无候选:LIKE 兜底(覆盖 2 字符中文等 FTS 盲区)
+                conds.append("m.content LIKE ?")
+                params.append(f"%{query}%")
+        else:
+            # 无有效 FTS 词:直接 LIKE 精确子串
+            conds.append("m.content LIKE ?")
+            params.append(f"%{query}%")
 
         params.append(limit)
         sql = (

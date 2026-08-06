@@ -107,7 +107,9 @@ class CronManager:
 
     async def _send_plain(self, task: dict) -> None:
         """发送固定文本提醒(未启用 Agent 或未注入引擎时的兜底)。"""
-        text = f"⏰ 定时提醒: {task.get('text', '')}"
+        from ..adapter.message import escape_cq
+
+        text = escape_cq(f"⏰ 定时提醒: {task.get('text', '')}")
         target_group = task.get("target_group")
         target_user = task.get("target_user")
         if target_group:

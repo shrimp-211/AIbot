@@ -26,27 +26,22 @@ _FALLBACK = [
 ]
 
 
-_session: aiohttp.ClientSession | None = None
-
-
 def setup(registry) -> None:
     @registry.command("一言")
     async def hitokoto(event: AgentEvent):
-        global _session
         try:
-            if _session is None:
-                _session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8))
-            async with _session.get(_ENDPOINT) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None)
-                    text = data.get("hitokoto", "")
-                    if text:
-                        source = data.get("from", "")
-                        reply = f"「{escape_cq(text)}」"
-                        if source:
-                            reply += f" —— {escape_cq(source)}"
-                        await event.reply(reply)
-                        return None
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as _s:
+                async with _s.get(_ENDPOINT) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        text = data.get("hitokoto", "")
+                        if text:
+                            source = data.get("from", "")
+                            reply = f"「{escape_cq(text)}」"
+                            if source:
+                                reply += f" —— {escape_cq(source)}"
+                            await event.reply(reply)
+                            return None
         except (aiohttp.ClientError, asyncio.TimeoutError):
             pass
         await event.reply(random.choice(_FALLBACK))

@@ -24,6 +24,7 @@ from src.adapter.base import AdapterRegistry, BaseAdapter
 from src.adapter.driver import ReverseDriver
 from src.adapter.event import AgentEvent
 from src.adapter.message import MessageChain, MessageSegment, escape_cq
+from src.agent.hooks import HookManager
 from src.pipeline.stages.plugin import PluginStage
 from src.plugins.registry import PluginRegistry
 from src.security.auth import AuthManager
@@ -586,6 +587,125 @@ async def test_cron_agent_fire():
     cron2 = CronManager(adapter, Config({"cron": {"agent_enabled": True}}))
     await cron2._fire(task)
     assert ("group", "100", "⏰ 定时提醒: 汇报今日新闻") in adapter.sent, adapter.sent
+
+
+async def test_hooks_pre_tool_fail_closed():
+    """pre_tool_use 钩子异常时按 block 处理(fail-closed),不能漏放危险操作。"""
+
+    async def bad(**kwargs):
+        raise RuntimeError("boom")
+
+    hm = HookManager()
+    hm.register("pre_tool_use", bad)
+    assert await hm.trigger("pre_tool_use", tool_name="bash") == "block"
+
+
+async def test_jsonkv_initialize_delete():
+    """JsonKV:async initialize 加载 + delete + 惰性加载回退。"""
+    import os
+    import tempfile
+
+    from src.storage.db import JsonKV
+
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "kv.json")
+        db = JsonKV(p)
+        await db.initialize()
+        db.set("a", 1)
+        await db.flush()
+        db2 = JsonKV(p)
+        await db2.initialize()
+        assert db2.get("a") == 1
+        db2.delete("a")
+        assert not db2.has("a")
+        await db2.flush()
+        db3 = JsonKV(p)
+        assert db3.get("a") is None  # 未 initialize 的惰性加载路径
+
+
+async def test_subagent_executor_snapshot():
+    """子代理 executor 应在 submit 时刻快照,跨消息 rebind 不影响运行中的子代理。"""
+    import asyncio
+
+    from src.agent.subagent import SubagentManager
+
+    used: list[str] = []
+
+    async def executor_a(name, args, flt):
+        used.append("A")
+        return "A-result"
+
+    async def executor_b(name, args, flt):
+        used.append("B")
+        return "B-result"
+
+    class FakeProvider:
+        def __init__(self):
+            self.turn = 0
+
+        async def chat(self, messages, system_prompt=None, tools=None):
+            self.turn += 1
+            if self.turn == 1:
+                return {
+                    "content": "",
+                    "tool_calls": [{"id": "t1", "name": "web_search", "arguments": {}}],
+                }
+            return {"content": "final", "tool_calls": []}
+
+    class FakeConfig:
+        def get(self, key, default):
+            return default
+
+    mgr = SubagentManager(FakeProvider(), FakeConfig())
+    mgr.bind_executor(executor_a)
+    job = mgr.submit("调研", "general", [], 1)
+    mgr.bind_executor(executor_b)  # 模拟下一消息 rebind
+    await mgr._jobs[job]
+    result = mgr._results[job]
+    assert result["status"] == "done", result
+    assert used == ["A"], f"executor 应在提交时快照,实际使用: {used}"
+
+
+async def test_skills_active_prune():
+    """技能会话激活 + 摊销清理过期绑定。"""
+    from src.agent.skills import Skill, SkillRegistry
+
+    sr = SkillRegistry()
+    sr._skills["web"] = Skill(name="web", description="调研", tools=["web_search"])
+    sr.activate("s1", "web")
+    assert sr.active("s1").name == "web"
+    assert sr.tool_filter("s1") == ["web_search"]
+    sr.deactivate("s1")
+    assert sr.active("s1") is None
+    sr.activate("stale", "web")
+    sr._active["stale"]["ts"] = 0
+    sr._access_count = 127
+    sr.active("other")
+    assert "stale" not in sr._active
+
+
+async def test_persona_switch_prune():
+    """人格切换 + 摊销清理过期会话绑定。"""
+    import os
+    import tempfile
+
+    from src.agent.persona import PersonaManager
+    from src.storage.db import JsonKV
+
+    with tempfile.TemporaryDirectory() as d:
+        db = JsonKV(os.path.join(d, "p.json"))
+        await db.initialize()
+        pm = PersonaManager(db)
+        pid = pm.create(name="P", system_prompt="X")["id"]
+        pm.switch("s1", pid)
+        assert pm.get_prompt("s1") == "X"
+        pm.switch("s1", None)
+        assert pm.get_prompt("s1") != "X"
+        pm.switch("stale", pid)
+        pm._session_personas["stale"]["ts"] = 0
+        pm._access_count = 127
+        pm.get_prompt("nope")
+        assert "stale" not in pm._session_personas
 
 
 async def run_all() -> bool:

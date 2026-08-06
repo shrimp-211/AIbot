@@ -148,8 +148,10 @@ class SubagentManager:
         """提交一个子代理任务,立即返回 job_id。"""
         agent_type = agent_type if agent_type in SUBAGENT_TYPES else "explore"
         job_id = uuid.uuid4().hex[:10]
+        # 在提交时刻快照 executor,避免跨消息 rebind 后子代理误用他人上下文
+        executor = self._executor
         task = asyncio.get_running_loop().create_task(
-            self._run(job_id, agent_type, prompt, tool_schemas, max_iterations)
+            self._run(job_id, agent_type, prompt, tool_schemas, max_iterations, executor)
         )
         self._jobs[job_id] = task
         return job_id
@@ -161,6 +163,7 @@ class SubagentManager:
         prompt: str,
         tool_schemas: list[dict] | None,
         max_iterations: int | None,
+        executor: ToolExecutor | None,
     ) -> None:
         try:
             spec = SUBAGENT_TYPES[agent_type]
@@ -172,7 +175,7 @@ class SubagentManager:
                 provider=self._provider,
                 system_prompt=spec["system"],
                 tools_schema=schemas,
-                executor=self._executor,
+                executor=executor,
                 max_iterations=max_iterations or max(2, int(self._config.get("agent.max_iterations", 8) or 8) // 2),
             )
             result = await sub.run(prompt)
@@ -209,6 +212,10 @@ class SubagentManager:
     def _record(self, job_id: str, status: str) -> None:
         self._history.append({"job_id": job_id, "status": status})
         self._history = self._history[-50:]
+        # 裁剪已完成结果,防止 _results 无限增长
+        if len(self._results) > 50:
+            for jid in list(self._results)[:-50]:
+                self._results.pop(jid, None)
 
 
 def build_tool_schemas(tool_registry: Any) -> list[dict]:

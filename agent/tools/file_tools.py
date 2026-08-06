@@ -9,7 +9,13 @@ from ...security.auth import Decision
 from .base import Tool, ToolContext
 
 _MAX_GREP_PATTERN_LEN = 200
-_DANGEROUS_REGEX = re.compile(r"\((?:[^()]*\|){2,}[^()]*\)|\{\d+,\}|(?:a+){3,}")
+# 拒绝危险回溯:长交替、量词范围、嵌套重复分组 `(a+)+`、环视滥用等
+_DANGEROUS_REGEX = re.compile(
+    r"\((?:[^()]*\|){2,}[^()]*\)"
+    r"|\{\d{2,},\d*\}"
+    r"|\([^()]*[+*][^()]*\)[*+]{1,2}"
+    r"|(?:a+){3,}"
+)
 
 
 def _resolve_path(root: str, path: str) -> Path:
@@ -19,8 +25,15 @@ def _resolve_path(root: str, path: str) -> Path:
     return p.resolve()
 
 
-def _check_file_access(auth, role_level: int, path: str) -> None:
-    decision = auth.check_path(path, role_level)
+def _check_file_access(auth, role_level: int, fp: Path, path: str) -> None:
+    """先规范化到绝对路径再走权限规则,同时强制可信目录(沙箱)。
+
+    `fp` 为解析后的绝对路径(规则匹配防 `./.env` 前缀绕过),
+    `path` 为原始用户输入(用于报错提示)。
+    """
+    if not auth.is_path_trusted(str(fp)):
+        raise PermissionError(f"路径不在可信目录内: {path}")
+    decision = auth.check_path(str(fp), role_level)
     if decision == Decision.DENY:
         raise PermissionError(f"路径访问被拒绝: {path}")
     if decision == Decision.ASK and role_level < 7:
@@ -41,8 +54,9 @@ class FileReadTool(Tool):
     }
 
     async def execute(self, ctx: ToolContext, path: str, offset: int = 0, limit: int | None = None) -> Any:
-        _check_file_access(ctx.auth, 0, path)
         fp = _resolve_path(ctx.config.get("agent.workdir", "."), path)
+        role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
+        _check_file_access(ctx.auth, role, fp, path)
         if not fp.exists() or not fp.is_file():
             return {"error": f"文件不存在: {path}"}
         try:
@@ -70,9 +84,9 @@ class FileWriteTool(Tool):
     }
 
     async def execute(self, ctx: ToolContext, path: str, content: str) -> Any:
-        role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
-        _check_file_access(ctx.auth, role, path)
         fp = _resolve_path(ctx.config.get("agent.workdir", "."), path)
+        role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
+        _check_file_access(ctx.auth, role, fp, path)
         try:
             loop = ctx.extra["loop"]
             await loop.run_in_executor(None, fp.parent.mkdir, True, True)
@@ -105,9 +119,9 @@ class FileEditTool(Tool):
             return {"error": "old_string 不能为空"}
         if len(old_string) > 100_000 or len(new_string) > 100_000:
             return {"error": "编辑内容过长(>100000字符)"}
-        role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
-        _check_file_access(ctx.auth, role, path)
         fp = _resolve_path(ctx.config.get("agent.workdir", "."), path)
+        role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
+        _check_file_access(ctx.auth, role, fp, path)
         if not fp.exists() or not fp.is_file():
             return {"error": f"文件不存在: {path}"}
         loop = ctx.extra["loop"]
@@ -153,11 +167,21 @@ class GlobTool(Tool):
 
     async def execute(self, ctx: ToolContext, pattern: str, path: str | None = None) -> Any:
         root = _resolve_path(ctx.config.get("agent.workdir", "."), path or ".")
+        role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
+        _check_file_access(ctx.auth, role, root, path or ".")
         if not root.exists() or not root.is_dir():
             return {"error": f"目录不存在: {path or '.'}"}
+        loop = ctx.extra["loop"]
+
+        def _glob() -> list[str]:
+            try:
+                matches = sorted(str(p) for p in root.glob(pattern))
+            except Exception:  # noqa: BLE001
+                return []
+            return matches
+
         try:
-            matches = [str(p) for p in root.glob(pattern)]
-            matches.sort()
+            matches = await loop.run_in_executor(None, _glob)
         except Exception as exc:  # noqa: BLE001
             return {"error": f"glob 失败: {exc}"}
         return {"count": len(matches), "matches": matches[:100]}
@@ -181,8 +205,9 @@ class GrepTool(Tool):
             return {"error": "正则表达式过长(>200字符)"}
         if _DANGEROUS_REGEX.search(pattern):
             return {"error": "正则包含危险回溯模式,已拒绝"}
-        _check_file_access(ctx.auth, 0, path)
         fp = _resolve_path(ctx.config.get("agent.workdir", "."), path)
+        role = ctx.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
+        _check_file_access(ctx.auth, role, fp, path)
 
         try:
             compiled = re.compile(pattern)
@@ -190,15 +215,21 @@ class GrepTool(Tool):
             return {"error": f"正则编译失败: {exc}"}
 
         targets: list[Path] = []
-        if fp.is_dir():
-            iterator = fp.glob(glob) if glob else fp.glob("**/*")
-            targets = [p for p in iterator if p.is_file()]
-        elif fp.is_file():
-            targets = [fp]
-        else:
+        loop = ctx.extra["loop"]
+
+        def _list_targets() -> list[Path]:
+            out: list[Path] = []
+            if fp.is_dir():
+                iterator = fp.glob(glob) if glob else fp.glob("**/*")
+                out = [p for p in iterator if p.is_file()]
+            elif fp.is_file():
+                out = [fp]
+            return out
+
+        targets = await loop.run_in_executor(None, _list_targets)
+        if not targets:
             return {"error": f"路径不存在: {path}"}
 
-        loop = ctx.extra["loop"]
         results = []
 
         def _search(p: Path) -> list[str]:

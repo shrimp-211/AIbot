@@ -38,6 +38,7 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
         self.self_id = str(self_id)
         self.token = token
         self._init_server(host, port, path, driver)
+        self._running = False
         # 多连接管理:key = 客户端 self_id(缺省 "default")
         self._connections: dict[str, web.WebSocketResponse] = {}
         self._active_ws: web.WebSocketResponse | None = None
@@ -58,9 +59,11 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
         app.router.add_get(self.path, self._ws_handler)
 
     async def start(self) -> None:
+        self._running = True
         await self._start_server("OneBot v11 WS", url_prefix="ws")
 
     async def stop(self) -> None:
+        self._running = False
         await self._stop_server()
         async with self._lock:
             conns = list(self._connections.values())
@@ -85,6 +88,9 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
     # ---------- WebSocket 连接 ----------
 
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
+        if not self._running:
+            # driver 共享模式下 stop() 后路由仍存活,拒绝新连接
+            return web.Response(status=503, text="Service Stopped")
         if self.token:
             auth = request.headers.get("Authorization", "")
             if auth != f"Bearer {self.token}":

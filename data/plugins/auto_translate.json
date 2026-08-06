@@ -1,1 +1,0 @@
-{"name":"自动翻译","version":"1.0.0","author":"移植自NoneBot社区","description":"自动检测语言翻译为中文,/翻译 <文本>","commands":["翻译"],"dependencies":[]}

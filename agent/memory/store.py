@@ -20,6 +20,7 @@ class MemoryStore:
         self._episodic_ttl = episodic_ttl
         # session_id -> deque of {role, content, ts}
         self._working: dict[str, list[dict]] = {}
+        self._access_count = 0
 
     # ---------- 工作记忆 ----------
 
@@ -32,7 +33,24 @@ class MemoryStore:
             self._working[session_id] = buf[-self._window_size :]
 
     def get_working(self, session_id: str) -> list[dict]:
+        self._maybe_prune()
         return list(self._working.get(session_id, []))
+
+    def _maybe_prune(self) -> None:
+        """摊销清理:每 256 次访问清理一次长时间不活跃的会话。"""
+        self._access_count += 1
+        if self._access_count % 256 == 0:
+            self.prune_working()
+
+    def prune_working(self, ttl: int = 3600) -> None:
+        """移除超过 ttl 秒无消息的会话工作记忆(防无限增长)。"""
+        now = time.time()
+        stale = [
+            sid for sid, buf in self._working.items()
+            if buf and now - buf[-1].get("ts", 0) > ttl
+        ]
+        for sid in stale:
+            self._working.pop(sid, None)
 
     def clear_working(self, session_id: str) -> None:
         self._working.pop(session_id, None)

@@ -11,6 +11,7 @@ import re
 import aiohttp
 
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 
 _ENDPOINT = "https://wttr.in/{city}?format=j1&lang=zh"
 _CITY_RE = re.compile(r"^[\w一-鿿\s]{1,30}$")
@@ -47,7 +48,7 @@ def setup(registry) -> None:
             await event.reply("😥 天气数据格式异常,请稍后再试。")
             return None
         await event.reply(
-            f"🌤 {area} 当前天气\n温度: {temp}°C (体感 {feel}°C)\n"
-            f"天气: {desc}\n湿度: {humi}% | 风速: {wind} km/h"
+            f"🌤 {escape_cq(area)} 当前天气\n温度: {temp}°C (体感 {feel}°C)\n"
+            f"天气: {escape_cq(desc)}\n湿度: {humi}% | 风速: {wind} km/h"
         )
         return None

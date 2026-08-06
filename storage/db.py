@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -17,18 +19,33 @@ class JsonKV:
     def __init__(self, path: str | Path, flush_interval: float = 10.0):
         self._path = Path(path)
         self._data: dict[str, Any] = {}
+        self._loaded = False
         self._dirty = False
         self._lock = threading.Lock()
         self._flush_interval = flush_interval
         self._task: asyncio.Task | None = None
-        self._load()
 
-    def _load(self) -> None:
+    def _load_sync(self) -> None:
+        """一次性加载磁盘数据。文件很小,仅执行一次。"""
+        if self._loaded:
+            return
         if self._path.exists():
             with open(self._path, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
                 if isinstance(loaded, dict):
                     self._data = loaded
+        self._loaded = True
+
+    def _ensure_loaded(self) -> None:
+        # 未显式 initialize 时惰性回退(同步路径,如测试/同步调用方)
+        if not self._loaded:
+            self._load_sync()
+
+    async def initialize(self) -> None:
+        """异步加载磁盘数据(在 async 上下文调用,不阻塞事件循环)。"""
+        if self._loaded:
+            return
+        await asyncio.to_thread(self._load_sync)
 
     async def _flush_loop(self) -> None:
         while True:
@@ -61,39 +78,53 @@ class JsonKV:
 
     def _write(self, data: dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        tmp.replace(self._path)
+        fd, tmp = tempfile.mkstemp(dir=str(self._path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self._path)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
     def get(self, key: str, default: Any = None) -> Any:
         with self._lock:
+            self._ensure_loaded()
             return self._data.get(key, default)
 
     def set(self, key: str, value: Any) -> None:
         with self._lock:
+            self._ensure_loaded()
             self._data[key] = value
             self._dirty = True
 
     def set_many(self, mapping: dict[str, Any]) -> None:
         with self._lock:
+            self._ensure_loaded()
             self._data.update(mapping)
             self._dirty = True
 
     def delete(self, key: str) -> None:
         with self._lock:
+            self._ensure_loaded()
             if key in self._data:
                 del self._data[key]
                 self._dirty = True
 
     def has(self, key: str) -> bool:
         with self._lock:
+            self._ensure_loaded()
             return key in self._data
 
     def keys(self) -> list[str]:
         with self._lock:
+            self._ensure_loaded()
             return list(self._data.keys())
 
     def get_all(self) -> dict[str, Any]:
         with self._lock:
+            self._ensure_loaded()
             return dict(self._data)
