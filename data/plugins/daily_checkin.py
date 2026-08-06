@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 
 from src.adapter.event import AgentEvent
+from src.adapter.message import escape_cq
 from src.storage.db import JsonKV
 
 _KEY = "plugin:checkin"
@@ -76,7 +77,7 @@ def setup(registry) -> None:
         lines = [f"🏆 签到积分排行 Top {len(top)}"]
         for i, (uid, rec) in enumerate(top, 1):
             medal = medals.get(i, "·")
-            name = rec.get("name") or uid
+            name = escape_cq(rec.get("name") or uid)
             lines.append(f"{medal} {i}. {name}: {rec['points']} 分")
         await event.reply("\n".join(lines))
         return None

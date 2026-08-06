@@ -4,5 +4,6 @@
   "author": "shrimp-211",
   "description": "调用 Google 免费翻译接口(gtx)翻译文本,支持目标语种指定。",
   "commands": ["翻译"],
+  "dependencies": [],
   "permission_level": 1
 }

@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.adapter.base import AdapterRegistry, BaseAdapter
 from src.adapter.driver import ReverseDriver
 from src.adapter.event import AgentEvent
 from src.adapter.message import MessageChain, MessageSegment, escape_cq
@@ -152,6 +153,68 @@ async def test_driver_route_dedup():
     assert ("POST", "/hook") in driver._registered
     assert ("GET", "/hook") in driver._registered
     assert len(driver._registered) == 3, driver._registered
+
+
+async def test_message_recall_withdraw():
+    """撤回插件:记录机器人消息 ID → 通过 AdapterRegistry 调用 delete_msg。"""
+    from pathlib import Path
+
+    class FakeAdapter(BaseAdapter):
+        platform = "qq"
+
+        def __init__(self):
+            self._msgs: dict[str, int] = {}
+            self.deleted: list[int] = []
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        async def send_message(self, event, text, at=False):
+            return {"message_id": 111}
+
+        def _remember_bot_message(self, key: str, mid: int) -> None:
+            self._msgs[key] = int(mid)
+
+        async def recent_bot_message(self, key: str):
+            return self._msgs.get(key)
+
+        async def forget_bot_message(self, key: str):
+            self._msgs.pop(key, None)
+
+        async def delete_msg(self, mid: int):
+            self.deleted.append(int(mid))
+
+    adapter_registry = AdapterRegistry()
+    fake = FakeAdapter()
+    adapter_registry.register("qq", fake)
+
+    plug = PluginRegistry(AuthManager(admin_users=("42",)))
+    plug.register_dependency(AdapterRegistry, adapter_registry)
+    loaded = await plug.load_from_directory(ROOT / "src" / "data" / "plugins")
+    assert "message_recall" in loaded, loaded
+
+    replies: list[str] = []
+    ev = make_event("/撤回", user_id="42", group_id="100")
+
+    async def capture(_e, msg, at=False):
+        replies.append(msg)
+
+    ev._send_callback = capture
+    fake._remember_bot_message(ev.session_id, 111)  # 模拟机器人刚发过消息
+
+    handled = await plug.dispatch(ev)
+    assert handled, "撤回命令应被插件处理"
+    assert fake.deleted == [111], fake.deleted
+    assert any("已撤回" in r for r in replies), replies
+
+    # 无记录时:不调用 API,提示无消息
+    ev2 = make_event("/撤回", user_id="42", group_id="100")
+    ev2._send_callback = capture
+    await plug.dispatch(ev2)
+    assert fake.deleted == [111], "无记录时不应调用 delete_msg"
 
 
 async def test_driver_start_stop_idempotent():

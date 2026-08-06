@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import platform
 import time
@@ -95,12 +96,16 @@ def _uptime_str() -> str:
 def setup(registry) -> None:
     @registry.command("状态")
     async def handler(event: AgentEvent):
+        # psutil.cpu_percent 与 /proc 读取均为阻塞 I/O,移到线程避免阻塞事件循环
+        cpu = await asyncio.to_thread(_cpu_info)
+        mem = await asyncio.to_thread(_mem_info)
+        up = await asyncio.to_thread(_uptime_str)
         text = (
             f"系统: {platform.system()} | 主机: {platform.node() or '未知'}\n"
             f"Python: {platform.python_version()}\n"
-            f"CPU: {_cpu_info()}\n"
-            f"内存: {_mem_info()}\n"
-            f"运行: {_uptime_str()}"
+            f"CPU: {cpu}\n"
+            f"内存: {mem}\n"
+            f"运行: {up}"
         )
         await event.reply(text)
         return None

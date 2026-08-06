@@ -50,6 +50,17 @@ class BaseAdapter(ABC):
     async def send_private_msg(self, user_id: str | int, message: str) -> Any:
         return await self.call_api("send_private_msg", user_id=int(user_id), message=message)
 
+    async def recent_bot_message(self, conversation_key: str) -> int | None:
+        """返回指定会话中机器人最近发送消息的 message_id。
+
+        未记录发送消息的适配器返回 None(撤回插件据此提示不可用)。
+        """
+        return None
+
+    async def forget_bot_message(self, conversation_key: str) -> None:
+        """清除指定会话中记录的机器人消息(撤回成功后调用,避免重复撤回)。"""
+        return None
+
 
 class AdapterRegistry:
     """多适配器注册中心:统一启动/停止,事件分发到全局回调。"""

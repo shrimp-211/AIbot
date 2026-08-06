@@ -3,5 +3,6 @@
   "version": "1.0.0",
   "author": "shrimp-211",
   "description": "群内同一非命令消息连续出现 3 次时自动复读。",
+  "commands": [],
   "dependencies": ["JsonKV"]
 }

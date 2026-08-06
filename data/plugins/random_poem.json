@@ -4,5 +4,6 @@
   "author": "shrimp-211",
   "description": "随机推送一句古诗词,今日诗词 API + 本地兜底。",
   "commands": ["诗词", "诗词更多"],
+  "dependencies": [],
   "permission_level": 1
 }

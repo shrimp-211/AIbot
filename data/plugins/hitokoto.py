@@ -38,7 +38,7 @@ def setup(registry) -> None:
                 _session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8))
             async with _session.get(_ENDPOINT) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
+                    data = await resp.json(content_type=None)
                     text = data.get("hitokoto", "")
                     if text:
                         source = data.get("from", "")

@@ -47,6 +47,9 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
         # 最近消息缓存(message_id -> 快照),供群撤回拦截恢复原文
         self.message_cache: dict[int, dict[str, Any]] = {}
         self._msg_cache_max = 200
+        # 机器人发送消息记录:会话键 -> (message_id, 时间戳),供 /撤回 使用
+        self._bot_messages: dict[str, tuple[int, float]] = {}
+        self._bot_msg_ttl = 3600
 
     def _register_driver_route(self, driver: ReverseDriver, path: str) -> None:
         driver.register_ws(path, self._ws_handler)
@@ -249,9 +252,31 @@ class OneBotV11Adapter(ReverseServerMixin, BaseAdapter):
         if at and event.message_type == "group":
             text = f"[CQ:at,qq={event.user_id}] {text}"
         if event.message_type == "group" and event.group_id:
-            await self.send_group_msg(event.group_id, text)
+            data = await self.send_group_msg(event.group_id, text)
         else:
-            await self.send_private_msg(event.user_id, text)
+            data = await self.send_private_msg(event.user_id, text)
+        msg_id = data.get("message_id") if isinstance(data, dict) else None
+        if msg_id:
+            self._remember_bot_message(event.session_id, int(msg_id))
+
+    def _remember_bot_message(self, conversation_key: str, message_id: int) -> None:
+        now = time.time()
+        stale = [k for k, (_, ts) in self._bot_messages.items() if now - ts > self._bot_msg_ttl]
+        for k in stale:
+            self._bot_messages.pop(k, None)
+        self._bot_messages[conversation_key] = (message_id, now)
+
+    async def recent_bot_message(self, conversation_key: str) -> int | None:
+        item = self._bot_messages.get(conversation_key)
+        if item is None:
+            return None
+        if time.time() - item[1] > self._bot_msg_ttl:
+            self._bot_messages.pop(conversation_key, None)
+            return None
+        return item[0]
+
+    async def forget_bot_message(self, conversation_key: str) -> None:
+        self._bot_messages.pop(conversation_key, None)
 
     async def send_message(self, event: AgentEvent, text: str, at: bool = False) -> Any:
         return await self._reply(event, text, at=at)

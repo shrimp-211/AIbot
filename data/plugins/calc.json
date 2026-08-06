@@ -4,5 +4,6 @@
   "author": "shrimp-211",
   "description": "基于 ast 白名单的安全算术求值,支持四则运算/幂/函数。",
   "commands": ["计算", "calc"],
+  "dependencies": [],
   "permission_level": 1
 }
