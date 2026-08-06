@@ -18,6 +18,8 @@ class OpenAICompatibleProvider(BaseProvider):
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
+        # reasoning_effort(OpenAI o1/o3 系列):配置时替代 temperature
+        self.reasoning_effort = config.get("reasoning_effort")
         self._client = AsyncOpenAI(
             api_key=self.api_key or "sk-not-set",
             base_url=self.base_url or None,
@@ -40,8 +42,14 @@ class OpenAICompatibleProvider(BaseProvider):
             model=self.model,
             messages=msgs,
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
-            temperature=kwargs.get("temperature", self.temperature),
         )
+        if self.reasoning_effort:
+            # 推理模型(o1/o3 系)不接受 temperature,用 reasoning_effort
+            params["reasoning_effort"] = kwargs.get(
+                "reasoning_effort", self.reasoning_effort
+            )
+        else:
+            params["temperature"] = kwargs.get("temperature", self.temperature)
         if tools:
             params["tools"] = [{"type": "function", "function": t} for t in tools]
 

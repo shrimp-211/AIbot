@@ -872,6 +872,102 @@ async def test_build_messages_approval():
     assert any(m["role"] == "user" and m["content"] == "你好" for m in msgs3)
 
 
+async def test_estimate_context_window():
+    """模型名 -> 上下文窗口推断。"""
+    from src.providers.base import estimate_context_window
+
+    assert estimate_context_window("deepseek-chat") == 163_840
+    assert estimate_context_window("deepseek-r1") == 163_840
+    assert estimate_context_window("claude-sonnet-4-6") == 1_000_000
+    assert estimate_context_window("claude-3-5-sonnet") == 200_000
+    assert estimate_context_window("gpt-4o") == 128_000
+    assert estimate_context_window("gpt-4.1-mini") == 1_000_000
+    assert estimate_context_window("o3-mini") == 200_000
+    assert estimate_context_window("glm-4.5") == 128_000
+    assert estimate_context_window("完全未知模型") == 128_000
+
+
+async def test_provider_context_window():
+    """BaseProvider.context_window:配置显式覆盖优先,否则按模型推断。"""
+    from src.providers.anthropic import AnthropicProvider
+
+    p = AnthropicProvider({"model": "deepseek-v3", "api_key": "k"})
+    assert p.context_window == 163_840, p.context_window
+    p2 = AnthropicProvider({"model": "x", "api_key": "k", "context_window": 99999})
+    assert p2.context_window == 99999
+
+
+async def test_anthropic_thinking():
+    """Anthropic extended_thinking:传 thinking 参数,不传 temperature,提取 thinking block。"""
+    from types import SimpleNamespace
+
+    from src.providers.anthropic import AnthropicProvider
+
+    class _FakeMessages:
+        def __init__(self):
+            self.last_params = None
+
+        async def create(self, **params):
+            self.last_params = params
+            think = SimpleNamespace(type="thinking", thinking="内部推理过程")
+            text = SimpleNamespace(type="text", text="最终回答")
+            return SimpleNamespace(content=[think, text])
+
+    provider = AnthropicProvider(
+        {"model": "claude-sonnet-4-6", "api_key": "k",
+         "thinking": {"enabled": True, "budget_tokens": 4096}}
+    )
+    provider._client = SimpleNamespace(messages=_FakeMessages())
+    res = await provider.chat([{"role": "user", "content": "hi"}])
+    assert res["content"] == "最终回答"
+    assert res["thinking"] == "内部推理过程"
+    assert provider._client.messages.last_params["thinking"] == {
+        "type": "enabled",
+        "budget_tokens": 4096,
+    }
+    assert "temperature" not in provider._client.messages.last_params
+    # 未启用 thinking:传 temperature
+    p2 = AnthropicProvider({"model": "claude-sonnet-4-6", "api_key": "k"})
+    p2._client = SimpleNamespace(messages=_FakeMessages())
+    await p2.chat([{"role": "user", "content": "hi"}])
+    assert "thinking" not in p2._client.messages.last_params
+    assert p2._client.messages.last_params.get("temperature") == p2.temperature
+
+
+async def test_openai_reasoning_effort():
+    """OpenAI 兼容 reasoning_effort:o 系列不传 temperature。"""
+    from types import SimpleNamespace
+
+    from src.providers.openai_compatible import OpenAICompatibleProvider
+
+    class _FakeMsg:
+        content = "hi"
+        tool_calls = None
+
+    class _FakeCompletions:
+        def __init__(self):
+            self.last_params = None
+
+        async def create(self, **params):
+            self.last_params = params
+            return SimpleNamespace(choices=[SimpleNamespace(message=_FakeMsg())])
+
+    provider = OpenAICompatibleProvider(
+        {"model": "o3-mini", "api_key": "sk-test", "reasoning_effort": "high"}
+    )
+    provider._client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+    res = await provider.chat([{"role": "user", "content": "hi"}])
+    assert res["content"] == "hi"
+    assert provider._client.chat.completions.last_params.get("reasoning_effort") == "high"
+    assert "temperature" not in provider._client.chat.completions.last_params
+    # 未配置 reasoning_effort:传 temperature
+    p2 = OpenAICompatibleProvider({"model": "gpt-4o", "api_key": "sk-test"})
+    p2._client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
+    await p2.chat([{"role": "user", "content": "hi"}])
+    assert "reasoning_effort" not in p2._client.chat.completions.last_params
+    assert p2._client.chat.completions.last_params.get("temperature") == p2.temperature
+
+
 async def run_all() -> bool:
     tests = [
         v

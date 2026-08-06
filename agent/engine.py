@@ -453,7 +453,11 @@ class AgentEngine:
     async def _run_react_loop(self, ctx: ToolContext, messages: list[dict], system_prompt: str) -> str:
         schemas = self._filtered_schemas(ctx.event.session_id)
         max_iterations = int(self.config.get("agent.max_iterations", 8) or 8)
-        max_context = int(self.config.get("agent.max_context_tokens", 128000) or 128000)
+        # 动态上下文窗口:默认取 provider 按模型推断的窗口,配置可显式覆盖
+        max_context = int(self.provider.context_window or 128000)
+        configured = int(self.config.get("agent.max_context_tokens", 0) or 0)
+        if configured > 0:
+            max_context = configured
         last_tool_name: str | None = None
         last_tool_args: dict | None = None
         same_tool_streak = 0

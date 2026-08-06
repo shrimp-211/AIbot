@@ -20,6 +20,17 @@ class AnthropicProvider(BaseProvider):
         super().__init__(config)
         self.api_version = config.get("api_version", "2023-06-01")
         self.max_tokens = int(config.get("max_tokens", 8192) or 8192)
+        # extended_thinking(参考 Claude Code):thinking.enabled + budget_tokens
+        thinking_cfg = config.get("thinking") or {}
+        if isinstance(thinking_cfg, bool):
+            thinking_cfg = {"enabled": thinking_cfg}
+        self.thinking_enabled = bool(
+            thinking_cfg.get("enabled", config.get("thinking_enabled", False))
+        )
+        self.thinking_budget = int(
+            thinking_cfg.get("budget_tokens", config.get("thinking_budget_tokens", 2048))
+            or 2048
+        )
         self._client = None  # lazy init
 
     def _get_client(self):
@@ -92,8 +103,17 @@ class AnthropicProvider(BaseProvider):
             model=self.model,
             messages=anthropic_messages,
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
-            temperature=kwargs.get("temperature", self.temperature),
         )
+        if self.thinking_enabled:
+            # extended thinking 与 temperature 互斥:启用时不传 temperature
+            params["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": min(
+                    self.thinking_budget, params["max_tokens"] - 1
+                ),
+            }
+        else:
+            params["temperature"] = kwargs.get("temperature", self.temperature)
         if system_prompt:
             params["system"] = system_prompt
         if tools:
@@ -103,9 +123,13 @@ class AnthropicProvider(BaseProvider):
 
         content_parts: list[str] = []
         tool_calls = []
+        thinking_text: list[str] = []
         for block in resp.content:
             if block.type == "text":
                 content_parts.append(block.text)
+            elif block.type == "thinking":
+                # 推理过程不进入最终回复,存入 raw 供上层使用
+                thinking_text.append(block.thinking)
             elif block.type == "tool_use":
                 tool_calls.append(
                     {
@@ -118,6 +142,7 @@ class AnthropicProvider(BaseProvider):
             "content": "".join(content_parts),
             "tool_calls": tool_calls,
             "raw": resp,
+            "thinking": "\n".join(thinking_text),
         }
 
     async def test(self) -> bool:

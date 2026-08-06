@@ -9,6 +9,40 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+# 模型 -> 上下文窗口(按模型名子串匹配,越长 key 越优先)
+_CONTEXT_WINDOWS: dict[str, int] = {
+    "opus-4": 1_000_000,
+    "sonnet-4": 1_000_000,
+    "haiku-4": 200_000,
+    "claude-3": 200_000,
+    "claude": 200_000,
+    "deepseek-r1": 163_840,
+    "deepseek": 163_840,
+    "gpt-4.1": 1_000_000,
+    "gpt-4o": 128_000,
+    "gpt-4": 128_000,
+    "o1": 200_000,
+    "o3": 200_000,
+    "glm": 128_000,
+    "qwen": 131_072,
+    "kimi": 131_072,
+    "moonshot": 131_072,
+    "gemini": 1_000_000,
+    "llama": 128_000,
+    "mistral": 128_000,
+}
+
+_DEFAULT_CONTEXT_WINDOW = 128_000
+
+
+def estimate_context_window(model: str) -> int:
+    """按模型名推断上下文窗口(越具体的 key 越优先)。"""
+    m = (model or "").lower()
+    for key, win in sorted(_CONTEXT_WINDOWS.items(), key=lambda kv: -len(kv[0])):
+        if key in m:
+            return win
+    return _DEFAULT_CONTEXT_WINDOW
+
 
 class BaseProvider(ABC):
     name: str = "base"
@@ -20,6 +54,9 @@ class BaseProvider(ABC):
         self.api_key = config.get("api_key", "")
         self.max_tokens = int(config.get("max_tokens", 4096) or 4096)
         self.temperature = float(config.get("temperature", 0.7) or 0.7)
+        # 上下文窗口:配置显式覆盖优先,否则按模型名推断
+        configured = int(config.get("context_window", 0) or 0)
+        self.context_window = configured or estimate_context_window(self.model)
 
     @abstractmethod
     async def chat(
