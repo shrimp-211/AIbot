@@ -269,6 +269,171 @@ async def test_driver_start_stop_idempotent():
     await driver.stop()  # 幂等
 
 
+# ---------- AstrBot 移植机制(A/B/C/D) ----------
+
+
+class _FakeProvider:
+    """可注入的假 Provider:前 fail_until 次调用抛异常。"""
+
+    def __init__(self, name: str = "fake", fail_until: int = 0):
+        self.name = name
+        self.model = name
+        self.config = {}
+        self.fail_until = fail_until
+        self.calls = 0
+
+    async def chat(self, messages, system_prompt=None, tools=None, **kwargs):
+        self.calls += 1
+        if self.calls <= self.fail_until:
+            raise RuntimeError(f"{self.name} down")
+        return {"content": f"ok:{self.name}", "tool_calls": []}
+
+    async def test(self):
+        return True
+
+
+async def test_provider_manager_fallback():
+    """机制 A:主 provider 失败自动切备用,冷却到期后自愈回主。"""
+    from src.providers.manager import ProviderManager
+
+    main = _FakeProvider("main", fail_until=1)  # 仅第一次失败
+    fb = _FakeProvider("fallback")
+    mgr = ProviderManager(
+        {"model": "main", "fallback_providers": [{"model": "fallback"}]},
+        factory=lambda cfg: main if cfg.get("model") == "main" else fb,
+        cooldown_secs=0,
+    )
+    r1 = await mgr.chat([{"role": "user", "content": "hi"}])
+    assert r1["content"] == "ok:fallback", r1  # main 失败 → fallback
+    assert mgr.active is fb
+    r2 = await mgr.chat([{"role": "user", "content": "hi"}])
+    assert r2["content"] == "ok:main", r2  # main 恢复 → 自愈
+    assert mgr.active is main
+    assert await mgr.test() is True
+
+    # 冷却防抖:冷却期内不重复打主 provider
+    main2 = _FakeProvider("main2", fail_until=1)
+    fb2 = _FakeProvider("fallback2")
+    mgr2 = ProviderManager(
+        {"model": "main2", "fallback_providers": [{"model": "fallback2"}]},
+        factory=lambda cfg: main2 if cfg.get("model") == "main2" else fb2,
+        cooldown_secs=100,
+    )
+    await mgr2.chat([{"role": "user", "content": "hi"}])  # main2 失败 → fallback2
+    calls_after_first = main2.calls
+    await mgr2.chat([{"role": "user", "content": "hi"}])  # main2 冷却中,应跳过
+    assert main2.calls == calls_after_first, "冷却期内不应重试 main"
+
+
+async def test_fix_messages_pairing():
+    """机制 B:assistant(tool_calls)+连续 tool 链整体保留;前无 assistant 的孤立 tool 被丢弃;无配套 tool 的 assistant(tool_calls) 被移除。"""
+    from src.agent.compressor import fix_messages
+
+    chain = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "1", "function": {"name": "x", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "1", "content": "ok"},
+        {"role": "tool", "tool_call_id": "2", "content": "second"},
+    ]
+    assert fix_messages(chain) == chain  # 合法链原样保留
+
+    isolated = [
+        {"role": "user", "content": "hi"},
+        {"role": "tool", "tool_call_id": "orphan", "content": "孤立"},
+    ]
+    fixed = fix_messages(isolated)
+    assert all(m.get("role") != "tool" for m in fixed), fixed  # 孤立 tool 被丢弃
+
+    cut = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "9", "function": {"name": "y", "arguments": "{}"}}],
+        },
+    ]
+    fixed2 = fix_messages(cut)
+    assert all(not m.get("tool_calls") for m in fixed2), fixed2  # 无配套 tool 被移除
+
+
+async def test_truncate_turns_halving():
+    """机制 B:按轮截断/减半兜底后,system 在前且紧跟 user。"""
+    from src.agent.compressor import truncate_by_halving, truncate_by_turns
+
+    msgs = [{"role": "system", "content": "sys"}]
+    for i in range(6):
+        msgs.append({"role": "user", "content": f"u{i}"})
+        msgs.append({"role": "assistant", "content": f"a{i}"})
+
+    out = truncate_by_turns(msgs, keep_most_recent_turns=2)
+    assert out[0]["role"] == "system", out
+    assert out[1]["role"] == "user", out  # system 后紧跟 user
+    assert out[-1]["content"] == "a5", out  # 保留最近
+
+    half = truncate_by_halving(msgs)
+    assert half[0]["role"] == "system", half
+    assert half[1]["role"] == "user", half
+    assert len(half) <= len(msgs)
+    assert half[-1]["content"] == "a5", half
+
+
+async def test_repeated_tool_guidance():
+    """机制 C:重复工具调用指导分级(>=3 提示,>=4 注意,>=5 警告)。"""
+    from src.agent.engine import _repeated_tool_guidance
+
+    assert _repeated_tool_guidance("bash", 1) == ""
+    assert _repeated_tool_guidance("bash", 2) == ""
+    assert "bash" in _repeated_tool_guidance("bash", 3)
+    assert "注意" in _repeated_tool_guidance("bash", 4)
+    assert "警告" in _repeated_tool_guidance("bash", 5)
+
+
+async def test_cron_agent_fire():
+    """机制 D:定时任务经主 Agent 生成内容;未注入引擎时走固定文本兜底。"""
+    from src.agent.proactive import CronManager
+    from src.utils.config import Config
+
+    class _FakeAdapter:
+        def __init__(self):
+            self.sent: list[tuple] = []
+
+        async def send_group_msg(self, gid, text):
+            self.sent.append(("group", gid, text))
+
+        async def send_private_msg(self, uid, text):
+            self.sent.append(("private", uid, text))
+
+    class _FakeEngine:
+        def __init__(self):
+            self.processed: list[str] = []
+
+        async def process(self, event):
+            self.processed.append(event.plain_text)
+            return "agent-reply"
+
+    adapter = _FakeAdapter()
+    engine = _FakeEngine()
+    cron = CronManager(adapter, Config({"cron": {"agent_enabled": True}}))
+    cron.set_engine(engine)
+    task = {
+        "id": "t1", "text": "汇报今日新闻", "desc": "每天9点",
+        "target_group": "100", "target_user": None, "session": "g:100",
+    }
+    await cron._fire(task)
+    assert engine.processed == ["汇报今日新闻"], engine.processed
+    assert ("group", "100", "agent-reply") in adapter.sent, adapter.sent
+    assert cron.get_history()[-1]["ok"] is True
+
+    # 未注入引擎:固定文本兜底
+    cron2 = CronManager(adapter, Config({"cron": {"agent_enabled": True}}))
+    await cron2._fire(task)
+    assert ("group", "100", "⏰ 定时提醒: 汇报今日新闻") in adapter.sent, adapter.sent
+
+
 async def run_all() -> bool:
     tests = [
         v

@@ -63,6 +63,9 @@ llm:
     base_url: ""              # OpenAI 兼容地址,如 DeepSeek: https://api.deepseek.com/v1
     max_tokens: 4096
     temperature: 0.7
+    # 可选:备用 provider 列表(主 provider 失败自动切换,冷却后自动重试)
+    # 每项结构同上(不含 fallback_providers 字段)
+    fallback_providers: []
 
 # ---------- 联网搜索 ----------
 search:
@@ -85,6 +88,10 @@ agent:
   workdir: "."             # 文件工具的操作根目录
   max_iterations: 8        # ReAct 循环最大迭代次数
   max_context_tokens: 128000  # 上下文压缩触发阈值(超过 82% 自动压缩)
+
+# ---------- 定时任务 ----------
+cron:
+  agent_enabled: true        # 任务触发时经主 Agent 生成内容(需 LLM);false = 固定文本提醒
 
 # ---------- 记忆系统 ----------
 # 三层记忆默认开启,无需配置:

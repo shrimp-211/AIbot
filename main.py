@@ -334,6 +334,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     # 回填 adapter:主 QQ 适配器作为默认发送通道
     engine.adapter = main_adapter
     cron._adapter = main_adapter
+    cron.set_engine(engine)  # 定时任务经主 Agent 生成内容(Cron active_agent)
 
     # 启动服务
     await cron.start()

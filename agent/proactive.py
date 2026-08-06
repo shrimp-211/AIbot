@@ -34,6 +34,11 @@ class CronManager:
         self._tasks: dict[str, dict] = {}
         self._history: list[dict] = []
         self._loop_task: asyncio.Task | None = None
+        self._engine: Any = None
+
+    def set_engine(self, engine: Any) -> None:
+        """注入主 Agent 引擎:定时任务触发时经 Agent 生成内容(参照 AstrBot Cron active_agent)。"""
+        self._engine = engine
 
     # ---------- 生命周期 ----------
 
@@ -84,21 +89,72 @@ class CronManager:
             self._persist_tasks()
 
     async def _fire(self, task: dict) -> None:
+        ok = True
+        try:
+            if self._agent_enabled():
+                await self._fire_with_agent(task)
+            else:
+                await self._send_plain(task)
+        except Exception:  # noqa: BLE001
+            ok = False
+            logger.exception(f"定时任务执行失败: {task.get('text')}")
+        self._record_history(task, ok)
+
+    def _agent_enabled(self) -> bool:
+        if self._engine is None:
+            return False
+        return bool(self._config.get("cron.agent_enabled", True))
+
+    async def _send_plain(self, task: dict) -> None:
+        """发送固定文本提醒(未启用 Agent 或未注入引擎时的兜底)。"""
         text = f"⏰ 定时提醒: {task.get('text', '')}"
         target_group = task.get("target_group")
         target_user = task.get("target_user")
-        ok = True
-        try:
-            if target_group:
-                await self._adapter.send_group_msg(target_group, text)
-            elif target_user:
-                await self._adapter.send_private_msg(target_user, text)
-            else:
-                logger.info(f"[定时任务] {task.get('desc')}: {task.get('text')}")
-        except Exception:  # noqa: BLE001
-            ok = False
-            logger.exception(f"定时任务发送失败: {task.get('text')}")
-        self._record_history(task, ok)
+        if target_group:
+            await self._adapter.send_group_msg(target_group, text)
+        elif target_user:
+            await self._adapter.send_private_msg(target_user, text)
+        else:
+            logger.info(f"[定时任务] {task.get('desc')}: {text}")
+
+    async def _deliver(self, text: str, target_group: str | None, target_user: str | None) -> None:
+        if target_group:
+            await self._adapter.send_group_msg(target_group, text)
+        elif target_user:
+            await self._adapter.send_private_msg(target_user, text)
+        else:
+            logger.info(f"[定时任务 Agent] {text}")
+
+    async def _fire_with_agent(self, task: dict) -> None:
+        """把定时任务文本交给主 Agent 生成内容后发送(参照 AstrBot Cron active_agent)。"""
+        from ..adapter.event import AgentEvent
+        from ..adapter.message import MessageChain, MessageSegment
+
+        target_group = task.get("target_group")
+        target_user = task.get("target_user")
+        tid = task.get("id", "")
+        event = AgentEvent(
+            platform="qq",
+            message_type="group" if target_group else "private",
+            group_id=target_group,
+            user_id=task.get("session", "cron"),
+            sender_name="定时任务",
+            session_id=f"cron:{tid}",
+            message=MessageChain([MessageSegment.text(task.get("text", ""))]),
+            is_tome=True,
+        )
+
+        sent = False
+
+        async def _cb(_event: AgentEvent, msg: str, at: bool = False) -> None:
+            nonlocal sent
+            sent = True
+            await self._deliver(msg, target_group, target_user)
+
+        event._send_callback = _cb
+        reply = await self._engine.process(event)
+        if reply and not sent:
+            await self._deliver(reply, target_group, target_user)
 
     # ---------- 持久化 ----------
 

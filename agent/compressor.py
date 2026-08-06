@@ -1,10 +1,11 @@
 """上下文压缩:超阈值自动触发,截断旧消息或 LLM 摘要。
 
 中文约 0.6 token/字,英文约 0.25 token/词(粗略估算,用于触发阈值)。
+压缩/截断后统一跑 fix_messages 修复 tool call/tool response 配对(参照
+AstrBot ContextTruncator),避免截断破坏 OpenAI 消息格式合法性。
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 
@@ -15,6 +16,101 @@ def estimate_tokens(text: str) -> int:
     cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
     other = len(text) - cjk
     return int(cjk * 0.6 + other * 0.25)
+
+
+# ---------- 消息结构修复(AstrBot ContextTruncator) ----------
+
+
+def fix_messages(messages: list[dict]) -> list[dict]:
+    """修复 tool call / tool response 配对。
+
+    OpenAI 规范要求 assistant(tool_calls) 后必须紧跟对应 tool 消息;
+    孤立的 tool 消息(前面无 assistant(tool_calls))会被丢弃,未配对的
+    assistant(tool_calls) 也会被移除,避免向 API 发送非法消息序列。
+    """
+    fixed: list[dict] = []
+    pending_assistant: dict | None = None
+    pending_tools: list[dict] = []
+
+    def flush_if_valid() -> None:
+        nonlocal pending_assistant, pending_tools
+        if pending_assistant is not None and pending_tools:
+            fixed.append(pending_assistant)
+            fixed.extend(pending_tools)
+        pending_assistant = None
+        pending_tools = []
+
+    for msg in messages:
+        role = msg.get("role")
+        if role == "tool":
+            if pending_assistant is not None:
+                pending_tools.append(msg)
+            continue
+        if role == "assistant" and msg.get("tool_calls"):
+            flush_if_valid()
+            pending_assistant = msg
+            continue
+        flush_if_valid()
+        fixed.append(msg)
+    flush_if_valid()
+    return fixed
+
+
+def _split_system_rest(messages: list[dict]) -> tuple[list[dict], list[dict]]:
+    first_non_system = 0
+    for i, msg in enumerate(messages):
+        if msg.get("role") != "system":
+            first_non_system = i
+            break
+    return messages[:first_non_system], messages[first_non_system:]
+
+
+def _ensure_user_message(
+    system_messages: list[dict],
+    truncated: list[dict],
+    original: list[dict],
+) -> list[dict]:
+    """保证 system 后紧跟 user 消息(部分 API 强制要求)。"""
+    if truncated and truncated[0].get("role") == "user":
+        return system_messages + truncated
+    first_user = next((m for m in original if m.get("role") == "user"), None)
+    if first_user is None:
+        return system_messages + truncated
+    return system_messages + [first_user] + truncated
+
+
+def truncate_by_turns(
+    messages: list[dict],
+    keep_most_recent_turns: int,
+    drop_turns: int = 1,
+) -> list[dict]:
+    """按轮次截断:保留最近 N 轮(user+assistant 为一轮),丢弃最旧轮次。"""
+    if keep_most_recent_turns == -1:
+        return messages
+    system, rest = _split_system_rest(messages)
+    if len(rest) // 2 <= keep_most_recent_turns:
+        return messages
+    num_to_keep = keep_most_recent_turns - drop_turns + 1
+    truncated = rest[-num_to_keep * 2 :] if num_to_keep > 0 else []
+    index = next((i for i, m in enumerate(truncated) if m.get("role") == "user"), None)
+    if index is not None and index > 0:
+        truncated = truncated[index:]
+    return fix_messages(_ensure_user_message(system, truncated, messages))
+
+
+def truncate_by_halving(messages: list[dict]) -> list[dict]:
+    """减半截断:删除最旧一半消息,保留最近一半(压缩后仍超限的兜底)。"""
+    if len(messages) <= 2:
+        return messages
+    system, rest = _split_system_rest(messages)
+    to_delete = len(rest) // 2
+    if to_delete == 0:
+        return messages
+    truncated = rest[to_delete:]
+    index = next((i for i, m in enumerate(truncated) if m.get("role") == "user"), None)
+    if index is not None:
+        truncated = truncated[index:]
+    return fix_messages(_ensure_user_message(system, truncated, messages))
 
 
 def should_compress(messages: list[dict], max_tokens: int, threshold: float = 0.82) -> bool:
@@ -65,16 +161,19 @@ async def compress_messages(
             )
             summary = (result.get("content") or "").strip()
             if summary:
-                return [
-                    {
-                        "role": "system",
-                        "content": f"[历史对话摘要] {summary}",
-                    }
-                ] + recent
+                return fix_messages(
+                    [
+                        {
+                            "role": "system",
+                            "content": f"[历史对话摘要] {summary}",
+                        }
+                    ]
+                    + recent
+                )
         except Exception:  # noqa: BLE001
             pass
 
-    return recent
+    return fix_messages(recent)
 
 
 def compress_tool_result(result: str, limit: int = 4000, max_chars: int = 12000) -> str:

@@ -47,7 +47,14 @@ class BaseProvider(ABC):
 
 
 def create_provider(config: dict[str, Any]) -> BaseProvider:
-    """按 type 创建 provider 实例。"""
+    """按 type 创建 provider 实例。
+
+    配置含 `fallback_providers` 时返回 ProviderManager(失败自动切换备用)。
+    """
+    if config.get("fallback_providers"):
+        from .manager import ProviderManager
+
+        return ProviderManager(config)
     ptype = (config.get("type") or "").lower()
     if ptype in ("anthropic", "claude"):
         from .anthropic import AnthropicProvider

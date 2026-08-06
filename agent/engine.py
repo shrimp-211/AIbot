@@ -14,7 +14,41 @@ from loguru import logger
 
 from ..adapter.event import AgentEvent
 from ..adapter.message import MessageChain
-from .compressor import compress_tool_result, compress_messages, should_compress
+from .compressor import (
+    compress_tool_result,
+    compress_messages,
+    should_compress,
+    truncate_by_halving,
+)
+
+# ---------- 重复工具调用指导(参照 AstrBot _track_tool_call_streak) ----------
+
+_REPEATED_TOOL_L1_THRESHOLD = 3
+_REPEATED_TOOL_L2_THRESHOLD = 4
+_REPEATED_TOOL_L3_THRESHOLD = 5
+_REPEATED_TOOL_L1_TEMPLATE = (
+    "\n\n[系统提示] 你已经连续 {streak} 次用相同参数调用工具 `{tool_name}`。"
+    "请检查是否应换一个工具、调整参数,或直接总结当前结果。"
+)
+_REPEATED_TOOL_L2_TEMPLATE = (
+    "\n\n[系统提示] 注意:你已经连续 {streak} 次用相同参数调用工具 `{tool_name}`。"
+    "除非重复确有必要,否则请停止重复,改换工具或调整参数,或说明还缺什么信息。"
+)
+_REPEATED_TOOL_L3_TEMPLATE = (
+    "\n\n[系统提示] 警告:你已经连续 {streak} 次用相同参数调用工具 `{tool_name}`。"
+    "重复程度已很高。请仅在每次调用都明显产出新信息时继续,否则改变策略、调整参数,"
+    "或向用户说明限制。"
+)
+
+
+def _repeated_tool_guidance(tool_name: str, streak: int) -> str:
+    if streak >= _REPEATED_TOOL_L3_THRESHOLD:
+        return _REPEATED_TOOL_L3_TEMPLATE.format(tool_name=tool_name, streak=streak)
+    if streak >= _REPEATED_TOOL_L2_THRESHOLD:
+        return _REPEATED_TOOL_L2_TEMPLATE.format(tool_name=tool_name, streak=streak)
+    if streak >= _REPEATED_TOOL_L1_THRESHOLD:
+        return _REPEATED_TOOL_L1_TEMPLATE.format(tool_name=tool_name, streak=streak)
+    return ""
 from .tools.base import ToolContext, ToolRegistry
 
 if TYPE_CHECKING:
@@ -355,6 +389,9 @@ class AgentEngine:
         schemas = self._filtered_schemas(ctx.event.session_id)
         max_iterations = int(self.config.get("agent.max_iterations", 8) or 8)
         max_context = int(self.config.get("agent.max_context_tokens", 128000) or 128000)
+        last_tool_name: str | None = None
+        last_tool_args: dict | None = None
+        same_tool_streak = 0
         for _ in range(max_iterations):
             if should_compress(messages, max_context):
                 if self.hooks:
@@ -363,6 +400,10 @@ class AgentEngine:
                 messages = await compress_messages(
                     self.provider, messages, max_context, keep_recent=6
                 )
+                if should_compress(messages, max_context):
+                    # 摘要后仍超限:减半兜底(参照 AstrBot ContextManager 末级检查)
+                    logger.info("压缩后仍超限,减半兜底截断")
+                    messages = truncate_by_halving(messages)
                 if self.hooks:
                     await self.hooks.trigger("post_compaction", messages=len(messages))
             result = await self.provider.chat(messages, system_prompt=system_prompt, tools=schemas)
@@ -405,12 +446,28 @@ class AgentEngine:
                 outputs = [await _run_one(tool_calls[0])]
 
             for tc, output in zip(tool_calls, outputs):
-                messages.append(
-                    {"role": "tool", "tool_call_id": tc["id"], "content": output}
-                )
                 if self._tool_awaiting(output):
                     # ask_user:本轮到此为止,等待用户回复后再继续
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc["id"], "content": output}
+                    )
                     return None
+                # 重复工具调用检测:连续相同(名+参数)达到阈值时注入分级指导
+                name = tc.get("name", "")
+                args = tc.get("arguments") or {}
+                if name == last_tool_name and args == last_tool_args:
+                    same_tool_streak += 1
+                else:
+                    last_tool_name = name
+                    last_tool_args = args
+                    same_tool_streak = 1
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": output + _repeated_tool_guidance(name, same_tool_streak),
+                    }
+                )
 
         return "任务步骤较多,已完成主要部分。如需继续处理,请告诉我下一步。"
 

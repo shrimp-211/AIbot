@@ -130,6 +130,7 @@ CONFIG_SCHEMA: dict = {
                     "base_url": _str_schema(),
                     "max_tokens": _int_schema(1, 200000),
                     "temperature": {"type": (int, float), "min": 0, "max": 2},
+                    "fallback_providers": _list_schema(),
                 },
             }
         },
@@ -145,6 +146,12 @@ CONFIG_SCHEMA: dict = {
             "workdir": _str_schema(),
             "max_iterations": _int_schema(1, 64),
             "max_context_tokens": _int_schema(1000, 1000000),
+        },
+    },
+    "cron": {
+        "type": dict,
+        "children": {
+            "agent_enabled": _bool_schema(),
         },
     },
     "notice": {
