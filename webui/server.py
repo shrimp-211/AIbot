@@ -763,7 +763,8 @@ class WebUIServer:
 
             async def _cb(_event: AgentEvent, _text: str, at: bool = False) -> None:
                 if _text and not ws.closed:
-                    await ws.send_str(json.dumps({"role": "assistant", "text": _text}))
+                    # event.reply 通道同时承载进度提示(思考中/工具执行),标记为 progress 便于前端区分
+                    await ws.send_str(json.dumps({"role": "progress", "text": _text}))
 
             event._send_callback = _cb
             try:

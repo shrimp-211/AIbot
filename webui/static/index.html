@@ -34,6 +34,7 @@
   #chat .msg { margin-bottom: 10px; }
   #chat .msg b { color: var(--accent); }
   #chat .msg.assistant b { color: var(--green); }
+  #chat .msg.progress { color: var(--muted); font-style: italic; font-size: 13px; }
   .nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
   .nav button { background: transparent; border: 1px solid var(--border); font-size: 13px; padding: 8px 12px; border-radius: 6px; }
   .nav button.active { background: var(--accent); border-color: var(--accent); }
@@ -168,8 +169,9 @@
     <div class="card">
       <div id="chat"></div>
       <div class="row" style="margin-top:12px">
-        <input id="chatInput" placeholder="输入消息测试 Agent..." onkeydown="if(event.key==='Enter')sendChat()">
+        <input id="chatInput" placeholder="输入消息测试 Agent...(/clear 清空会话)" onkeydown="if(event.key==='Enter')sendChat()">
         <button onclick="sendChat()">发送</button>
+        <button class="secondary" onclick="clearChat()">清空会话</button>
       </div>
     </div>
     <div class="card">
@@ -448,15 +450,24 @@ let chatWs = null;
 function connectChat() {
   if (chatWs && chatWs.readyState <= 1) return;
   chatWs = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/chat', ['chat', 'auth.' + token]);
-  chatWs.onmessage = e => { const d = JSON.parse(e.data); addChat('assistant', d.text); };
+  chatWs.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.role === 'progress') addChat('progress', d.text);
+    else addChat('assistant', d.text);
+  };
   chatWs.onclose = () => { chatWs = null; };
 }
 function addChat(role, text) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
-  div.innerHTML = `<b>${role === 'assistant' ? 'AI' : '我'}:</b> <span>${text}</span>`;
+  const label = role === 'assistant' ? 'AI' : (role === 'progress' ? '⏳' : '我');
+  div.innerHTML = `<b>${label}:</b> <span>${text}</span>`;
   $('chat').appendChild(div);
   $('chat').scrollTop = $('chat').scrollHeight;
+}
+function clearChat() {
+  $('chat').innerHTML = '';
+  if (chatWs && chatWs.readyState === 1) chatWs.send(JSON.stringify({ text: '/clear', user_id: localStorage.getItem('webui_client_id') || 'webui' }));
 }
 function sendChat() {
   const text = $('chatInput').value.trim();

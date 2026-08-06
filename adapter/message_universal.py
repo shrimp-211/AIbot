@@ -15,9 +15,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-from .message import MessageChain
+from .message import MessageChain, escape_cq
 
-_SUPPORTED = ("text", "image", "at", "reply", "voice", "video", "file", "markdown", "face")
+_SUPPORTED = (
+    "text", "image", "at", "reply", "voice", "video", "file", "markdown", "face",
+    "dice", "rps", "music", "forward", "json", "shake",
+)
 
 
 @dataclass
@@ -81,6 +84,36 @@ class UniSegment:
     def face(cls, face_id: int) -> "UniSegment":
         return cls("face", {"id": str(face_id)})
 
+    @classmethod
+    def dice(cls) -> "UniSegment":
+        """掷骰子(客户端展示 1-6 随机)。"""
+        return cls("dice", {})
+
+    @classmethod
+    def rps(cls) -> "UniSegment":
+        """猜拳。"""
+        return cls("rps", {})
+
+    @classmethod
+    def music(cls, kind: str = "163", music_id: str = "") -> "UniSegment":
+        """音乐分享:kind=163(网易云)/qq/custom。"""
+        return cls("music", {"kind": kind, "id": str(music_id)})
+
+    @classmethod
+    def forward(cls, messages: list[dict]) -> "UniSegment":
+        """合并转发节点列表。"""
+        return cls("forward", {"messages": messages})
+
+    @classmethod
+    def json_rich(cls, data: dict) -> "UniSegment":
+        """JSON 富媒体(小程序卡片等)。"""
+        return cls("json", {"data": data})
+
+    @classmethod
+    def shake(cls) -> "UniSegment":
+        """窗口抖动(戳一戳窗)。"""
+        return cls("shake", {})
+
     def to_text(self) -> str:
         """降级渲染:非文本段转换为描述文本(保证纯文本通道可用)。"""
         if self.type == "text":
@@ -102,6 +135,18 @@ class UniSegment:
             return self.data.get("content", "")
         if self.type == "face":
             return f"[表情{self.data.get('id', '')}]"
+        if self.type == "dice":
+            return "[骰子]"
+        if self.type == "rps":
+            return "[猜拳]"
+        if self.type == "music":
+            return f"[音乐:{self.data.get('kind', '')}:{self.data.get('id', '')}]"
+        if self.type == "forward":
+            return f"[合并转发 {len(self.data.get('messages', []) or [])} 条]"
+        if self.type == "json":
+            return "[卡片消息]"
+        if self.type == "shake":
+            return "[窗口抖动]"
         return f"[{self.type}]"
 
     def to_markdown(self) -> str:
@@ -113,6 +158,20 @@ class UniSegment:
             name = self.data.get("name", "文件")
             return f"[{name}]({url})" if url else f"[文件]{name}"
         return self.to_text()
+
+    def to_cq_string(self) -> str:
+        """转换为 OneBot v11 CQ 码字符串(QQ 平台专用)。"""
+        if self.type == "text":
+            return escape_cq(self.data.get("text", ""))
+        parts = []
+        for k, v in self.data.items():
+            if k in ("messages", "data") and isinstance(v, (list, dict)):
+                import json
+
+                parts.append(f"{k}={escape_cq(json.dumps(v, ensure_ascii=False))}")
+            else:
+                parts.append(f"{k}={escape_cq(str(v))}")
+        return f"[CQ:{self.type},{','.join(parts)}]" if parts else f"[CQ:{self.type}]"
 
 
 class UniMessage(list):
@@ -144,6 +203,9 @@ class UniMessage(list):
 
     def to_markdown(self) -> str:
         return "".join(s.to_markdown() for s in self)
+
+    def to_cq_string(self) -> str:
+        return "".join(s.to_cq_string() for s in self)
 
     def get(self, type_: str) -> list[UniSegment]:
         return [s for s in self if s.type == type_]

@@ -1,34 +1,84 @@
-"""多人格系统:独立 system_prompt + 工具白名单 + 会话级切换(热切换)。"""
+"""多人格系统:独立 system_prompt + 工具白名单 + 会话级切换(热切换)。
+
+人格来源二合一(参照 AstrBot prompts 目录 + 内置人格):
+- 文件式:data/personas/*.md(文件名为人格 id,内容为 system_prompt;首行 `# 名字` 可选)
+- 数据库式:经 /persona create 或 WebUI 创建
+文件人格优先级高于数据库人格(同名覆盖)。
+"""
 from __future__ import annotations
 
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 
 class PersonaManager:
-    def __init__(self, db: Any, default_prompt: str = "你是 QQ 群里的智能 AI 助手,乐于助人。"):
+    def __init__(
+        self,
+        db: Any,
+        default_prompt: str = "你是 QQ 群里的智能 AI 助手,乐于助人。",
+        personas_dir: str | Path | None = None,
+    ):
         self._db = db
         self._default_prompt = default_prompt
+        self._personas_dir = Path(personas_dir) if personas_dir else None
+        # 文件式人格(filename stem -> persona dict)
+        self._file_personas: dict[str, dict] = {}
         # session_id -> {"persona": persona_id, "ts": 切换时间}
         self._session_personas: dict[str, dict] = {}
         self._access_count = 0
+        if self._personas_dir is not None:
+            self.reload_files()
+
+    # ---------- 文件式人格 ----------
+
+    def reload_files(self) -> int:
+        """从 personas_dir 扫描 *.md 加载文件式人格,返回数量。"""
+        if self._personas_dir is None:
+            return 0
+        self._personas_dir.mkdir(parents=True, exist_ok=True)
+        self._file_personas.clear()
+        for path in sorted(self._personas_dir.glob("*.md")):
+            try:
+                content = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            stem = path.stem
+            name, description = stem, ""
+            if content.startswith("# "):
+                first, _, rest = content.partition("\n")
+                name = first.lstrip("# ").strip() or stem
+                content = rest.strip()
+            self._file_personas[stem] = {
+                "name": name,
+                "system_prompt": content,
+                "description": description,
+                "tool_allowlist": None,
+                "begin_dialogs": [],
+                "source": "file",
+            }
+        return len(self._file_personas)
 
     # ---------- CRUD ----------
 
     def list(self) -> list[dict]:
-        personas = self._db.get("personas", {})
+        merged = dict(self._file_personas)
+        merged.update(self._db.get("personas", {}))
         return [
             {
                 "id": pid,
                 "name": p.get("name", pid),
                 "description": p.get("description", ""),
                 "tool_allowlist": p.get("tool_allowlist"),
+                "source": p.get("source", "db"),
             }
-            for pid, p in personas.items()
+            for pid, p in merged.items()
         ]
 
     def get(self, persona_id: str) -> dict | None:
+        if persona_id in self._file_personas:
+            return self._file_personas[persona_id]
         return self._db.get("personas", {}).get(persona_id)
 
     def create(
