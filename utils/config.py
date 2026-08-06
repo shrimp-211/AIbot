@@ -145,7 +145,8 @@ CONFIG_SCHEMA: dict = {
         "children": {
             "workdir": _str_schema(),
             "max_iterations": _int_schema(1, 64),
-            "max_context_tokens": _int_schema(1000, 1000000),
+            # 0 = 按 provider 模型自动推断上下文窗口
+            "max_context_tokens": _int_schema(0, 1000000),
         },
     },
     "cron": {

@@ -63,6 +63,19 @@ llm:
     base_url: ""              # OpenAI 兼容地址,如 DeepSeek: https://api.deepseek.com/v1
     max_tokens: 4096
     temperature: 0.7
+    # 可选:上下文窗口(默认按模型名自动推断;显式配置时覆盖推断值)
+    # context_window: 128000
+    # 可选:指数退避重试(限流/超时/5xx 自动重试)
+    # retry:
+    #   max_attempts: 3      # 最多尝试次数
+    #   base_delay: 0.5      # 首次重试延迟(秒),之后翻倍
+    #   max_delay: 8.0       # 重试延迟封顶(秒)
+    # 可选(anthropic):extended_thinking 深度推理
+    # thinking:
+    #   enabled: false       # true 时启用(与 temperature 互斥)
+    #   budget_tokens: 2048  # 推理预算(需小于 max_tokens)
+    # 可选(OpenAI o1/o3 系):推理强度,配置后替代 temperature
+    # reasoning_effort: medium   # low | medium | high
     # 可选:备用 provider 列表(主 provider 失败自动切换,冷却后自动重试)
     # 每项结构同上(不含 fallback_providers 字段)
     fallback_providers: []
@@ -87,7 +100,7 @@ mcp:
 agent:
   workdir: "."             # 文件工具的操作根目录
   max_iterations: 8        # ReAct 循环最大迭代次数
-  max_context_tokens: 128000  # 上下文压缩触发阈值(超过 82% 自动压缩)
+  max_context_tokens: 0    # 上下文压缩触发阈值;0=按 provider 模型自动推断窗口(超过 82% 自动压缩)
 
 # ---------- 定时任务 ----------
 cron:
