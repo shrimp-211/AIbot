@@ -1,0 +1,1 @@
+{"name": "命令别名", "version": "1.0.0", "author": "移植自noneplugin/nonebot-plugin-alias", "description": "管理命令别名:添加/删除/列表,JsonKV持久化", "commands": ["别名"], "dependencies": ["JsonKV"]}

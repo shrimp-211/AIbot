@@ -1,0 +1,1 @@
+{"name": "CoC骰娘", "version": "1.0.0", "author": "移植自abrahum/nonebot_plugin_cocdicer", "description": "CoC TRPG掷骰:/coc属性骰 /sc理智检定 /rc成长检定", "commands": ["coc", "sc", "rc"], "dependencies": []}
