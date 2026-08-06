@@ -18,6 +18,7 @@ from aiohttp import WSMsgType, web
 from loguru import logger
 
 from .base import BaseAdapter
+from .driver import ReverseDriver
 from .event import AgentEvent
 from .message import MessageChain
 
@@ -32,6 +33,7 @@ class OneBotV11Adapter(BaseAdapter):
         path: str = "/ws",
         token: str = "",
         self_id: str = "",
+        driver: ReverseDriver | None = None,
     ):
         self.host = host
         self.port = port
@@ -39,10 +41,17 @@ class OneBotV11Adapter(BaseAdapter):
         self.token = token
         self.self_id = str(self_id)
 
-        self._app = web.Application()
-        self._app.router.add_get(path, self._ws_handler)
-        self._runner = web.AppRunner(self._app)
+        self._driver = driver
+        self._app: web.Application | None = None
+        self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
+        if driver is not None:
+            # 共享驱动:只注册路由,服务端生命周期由 driver 管理
+            driver.register_ws(path, self._ws_handler)
+        else:
+            self._app = web.Application()
+            self._app.router.add_get(path, self._ws_handler)
+            self._runner = web.AppRunner(self._app)
         # 多连接管理:key = 客户端 self_id(缺省 "default")
         self._connections: dict[str, web.WebSocketResponse] = {}
         self._active_ws: web.WebSocketResponse | None = None
@@ -54,6 +63,11 @@ class OneBotV11Adapter(BaseAdapter):
         self._msg_cache_max = 200
 
     async def start(self) -> None:
+        if self._driver is not None:
+            logger.info(
+                f"OneBot v11 WS 路由已挂载: ws://{self._driver.host}:{self._driver.port}{self.path}"
+            )
+            return
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
         await self._site.start()
@@ -62,6 +76,8 @@ class OneBotV11Adapter(BaseAdapter):
         )
 
     async def stop(self) -> None:
+        if self._driver is not None:
+            return
         if self._site is not None:
             await self._site.stop()
         await self._runner.cleanup()

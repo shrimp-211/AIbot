@@ -20,9 +20,9 @@
 | QQ 信息 | 群信息/群列表/好友列表/用户信息 |
 | MCP | Model Context Protocol 外部工具接入 |
 | 技能 | SKILL.md 技能系统(工具白名单 + 自动匹配) |
-| 插件 | 外部插件热加载、4 种 handler、依赖注入、plugin.json 元数据 |
+| 插件 | 外部插件热加载、4 种 handler、依赖注入(含 AdapterRegistry)、plugin.json 元数据 |
 | 安全 | 7 级权限 + deny→ask→allow 三层决策 + 可信目录/沙箱 + 审计日志 |
-| 平台 | OneBot(反向WS/正向WS/HTTP)、QQ 官方 Webhook、Telegram |
+| 平台 | ReverseDriver 共享服务端 + 适配器插件化(`data/adapters/`)、OneBot(反向WS/正向WS/HTTP)、QQ 官方 Webhook、Telegram |
 | 管理 | WebUI 控制台(状态/工具/任务/广播/MCP/技能/审计/子代理) |
 
 ## 快速开始
@@ -39,7 +39,8 @@ pip install aiohttp httpx loguru pyyaml openai
 
 编辑 `src/config.yaml`:
 
-- `onebot.port` — WebSocket 监听端口,与 OneBot 客户端保持一致
+- `driver.port` — 反向驱动端口(默认 6199,WS/HTTP 适配器共享),与 OneBot 客户端保持一致
+- `onebot.path` — WebSocket 路径(默认 `/ws`);`onebot_http.path`/`qq_official.path` 为同端口下的子路径
 - `llm.provider` — 设置模型与 API Key(建议环境变量 `${LLM_API_KEY:-}`)
 - `security.super_admin_users` — 改为你自己的 QQ 号
 - `webui.password` — 管理密码
@@ -89,6 +90,11 @@ python -m src.main
 | 一言 | `/一言` | 在线佳句 + 本地兜底 |
 | 天气查询 | `/天气 北京` | wttr.in 免费接口 |
 | 关键词回复 | `/关键词` | 管理员配置关键词自动回复 |
+| 翻译 | `/翻译 <文本>` | Google 免费接口,自动识别语种 |
+| 群管理 | `/禁言 @成员` `/踢人 @成员` 等 | 禁言/解禁/踢人/设管理/全体禁言(管理员) |
+| 复读机 | (自动) | 群内同一消息连续 3 次自动复读 |
+| 计算器 | `/计算 1+2*3` | ast 白名单安全求值 |
+| 诗词 | `/诗词` | 今日诗词 API + 本地兜底 |
 | 示例插件 | `/plugin_echo` `/uptime` | 插件开发参考 |
 
 ### 编写插件
@@ -120,7 +126,7 @@ def setup(registry) -> None:
 }
 ```
 
-支持 4 种 handler:`@registry.command` / `@registry.message` / `@registry.regex` / `@registry.llm`,以及多轮会话控制与依赖注入(`Config`/`AuthManager`/`MemoryStore`/`JsonKV`)。
+支持 4 种 handler:`@registry.command` / `@registry.message` / `@registry.regex` / `@registry.llm`,以及多轮会话控制与依赖注入(`Config`/`AuthManager`/`MemoryStore`/`JsonKV`/`AdapterRegistry`)。插件参数声明 `registry: AdapterRegistry` 即可调用平台 API(如群管插件的禁言/踢人)。
 
 ## 命令
 
@@ -139,10 +145,14 @@ def setup(registry) -> None:
 OneBot v11 客户端 (NapCat/Lagrange) ──┐
 Telegram / QQ官方 Webhook ─────────────┤
                                        ▼
-adapter/  BaseAdapter → AgentEvent(平台无关事件) → AdapterRegistry 分发
+driver/    ReverseDriver 共享服务端(单端口承载 WS/HTTP 路由)
+adapter/   BaseAdapter → AgentEvent(平台无关事件) → AdapterRegistry 分发
+           适配器插件化:data/adapters/*.py(register 入口,新增平台不改 main.py)
                                        ▼
-pipeline/  8 阶段洋葱模型
-  Notice → WakeCheck → RateLimit → ContentSafety → PreProcess → Process → Decorate → Respond
+pipeline/  10 阶段洋葱模型
+  Notice → RateLimit → ContentSafety → Security → Plugin → WakeCheck
+         → PreProcess → Process → Decorate → Respond
+  (Plugin 在唤醒检测之前:插件可见全部消息,命令无需 @)
                                        ▼
 agent/     ReAct 循环 (并行工具调用 / 上下文压缩)
   工具(40) / 三层记忆 / 人格 / 技能 / 定时任务 / 子代理 / Plan / MCP / 钩子
@@ -165,6 +175,7 @@ src/
 ├── storage/           # JSON 键值持久化(原子写盘)
 ├── skills/            # 内置技能(SKILL.md)
 ├── data/plugins/      # 内置外部插件示例
+├── data/adapters/     # 内置适配器插件(平台接入,register 入口)
 ├── webui/             # 管理控制台
 └── utils/             # 配置/日志
 ```

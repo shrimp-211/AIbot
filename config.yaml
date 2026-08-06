@@ -2,6 +2,14 @@
 # 支持 ${ENV_VAR} 与 ${ENV_VAR:-default} 环境变量注入
 # 复制为 config.local.yaml 可本地覆盖(该文件已被 gitignore)
 
+# ---------- 反向驱动(共享 HTTP/WS 服务端,NoneBot Driver 风格) ----------
+# 启用后,onebot / onebot_http / qq_official 等被动接收类适配器
+# 共享同一端口的不同路径,不再各自开端口。
+driver:
+  enabled: true            # false = 每个适配器自持端口(旧行为)
+  host: 127.0.0.1
+  port: 6199
+
 # ---------- 适配器 ----------
 # 默认启用反向 WebSocket(服务端)模式,其余模式按需开启
 onebot:

@@ -1,0 +1,8 @@
+{
+  "name": "计算器",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "基于 ast 白名单的安全算术求值,支持四则运算/幂/函数。",
+  "commands": ["计算", "calc"],
+  "permission_level": 1
+}

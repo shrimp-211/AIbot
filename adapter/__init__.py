@@ -8,6 +8,7 @@
 - TelegramAdapter:Telegram Bot API 长轮询
 """
 from .base import AdapterRegistry, BaseAdapter
+from .driver import ReverseDriver
 from .event import AgentEvent
 from .message import MessageChain, MessageSegment
 from .message_universal import UniMessage, UniSegment
@@ -20,6 +21,7 @@ from .telegram import TelegramAdapter
 __all__ = [
     "AdapterRegistry",
     "BaseAdapter",
+    "ReverseDriver",
     "AgentEvent",
     "MessageChain",
     "MessageSegment",

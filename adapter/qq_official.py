@@ -20,6 +20,7 @@ from aiohttp import web
 from loguru import logger
 
 from .base import BaseAdapter
+from .driver import ReverseDriver
 from .event import AgentEvent
 from .message import MessageChain
 
@@ -39,6 +40,7 @@ class QQOfficialAdapter(BaseAdapter):
         app_secret: str = "",
         sign_secret: str = "",
         api_base: str = "https://api.sgroup.qq.com",
+        driver: ReverseDriver | None = None,
     ):
         self.host = host
         self.port = port
@@ -48,13 +50,25 @@ class QQOfficialAdapter(BaseAdapter):
         self.sign_secret = sign_secret
         self.api_base = api_base.rstrip("/")
 
-        self._app = web.Application()
-        self._app.router.add_post(path, self._webhook_handler)
-        self._runner = web.AppRunner(self._app)
+        self._driver = driver
+        self._app: web.Application | None = None
+        self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
+        if driver is not None:
+            driver.register_http(path, self._webhook_handler)
+        else:
+            self._app = web.Application()
+            self._app.router.add_post(path, self._webhook_handler)
+            self._runner = web.AppRunner(self._app)
         self._session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
+        if self._driver is not None:
+            logger.info(
+                f"QQ 官方 Webhook 路由已挂载: http://{self._driver.host}:{self._driver.port}{self.path}"
+            )
+            self._session = aiohttp.ClientSession()
+            return
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
         await self._site.start()
@@ -64,9 +78,10 @@ class QQOfficialAdapter(BaseAdapter):
         )
 
     async def stop(self) -> None:
-        if self._site is not None:
-            await self._site.stop()
-        await self._runner.cleanup()
+        if self._driver is None:
+            if self._site is not None:
+                await self._site.stop()
+            await self._runner.cleanup()
         if self._session is not None:
             await self._session.close()
             self._session = None

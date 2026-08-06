@@ -2,6 +2,26 @@
 
 本项目的变更记录。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.2.0] - 2026-08-06
+
+### 新增
+- **反向驱动 `ReverseDriver`**(参考 NoneBot Driver 抽象):单个共享 aiohttp 应用承载多适配器的 WebSocket / HTTP 路由,被动接收类适配器不再各自开端口;`config.yaml` 新增 `driver` 段(默认绑定 6199,`enabled: false` 可回退到旧的每适配器自持端口)
+- **适配器插件化加载**:`data/adapters/*.py` 提供 `register(registry, config, driver)` 入口,新增平台只需放入一个插件文件,无需修改 `main.py`(内置 5 个适配器插件:反向 WS / 正向 WS / HTTP / QQ 官方 / Telegram)
+- **`AdapterRegistry` 依赖注入**:插件可通过 `registry: AdapterRegistry` 参数调用平台 API,支撑群管等平台操作插件
+- **移植 5 个 NoneBot 风格插件**(置于 `data/plugins/`):
+  - 翻译(`/翻译`,Google gtx 免费接口,自动识别语种)
+  - 群管理(`/禁言 /解禁 /踢人 /设管理 /全体禁言`,管理员权限,经注入的 AdapterRegistry 调 OneBot API)
+  - 复读机(群内同一非命令消息连续 3 次自动复读,JsonKV 持久化)
+  - 计算器(`/计算`,基于 ast 白名单的安全求值,幂/函数/防溢出)
+  - 诗词(`/诗词`,今日诗词 API + 本地兜底)
+
+### 变更
+- **管道重构(NoneBot 风格插件分发)**:阶段顺序调整为 Notice → RateLimit → ContentSafety → Security → Plugin → WakeCheck → PreProcess → Process → Decorate → Respond
+  - 新增 `SecurityStage`:黑名单 / 私聊配对 / 群白名单(从原 WakeCheckStage 抽出)
+  - 新增 `PluginStage`:置于唤醒检测之前,所有消息先经插件分发,message/regex/command handler 无需 @ 唤醒即可生效
+  - `WakeCheckStage` 简化为纯唤醒检测(仅 @/命令前缀/唤醒词)
+  - `ProcessStage` 改为仅 Agent(插件分发已前移)
+
 ## [1.1.0] - 2026-08-06
 
 ### 新增

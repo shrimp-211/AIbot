@@ -1,0 +1,8 @@
+{
+  "name": "诗词",
+  "version": "1.0.0",
+  "author": "shrimp-211",
+  "description": "随机推送一句古诗词,今日诗词 API + 本地兜底。",
+  "commands": ["诗词", "诗词更多"],
+  "permission_level": 1
+}

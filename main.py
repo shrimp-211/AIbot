@@ -14,16 +14,7 @@ from typing import Callable
 
 from loguru import logger
 
-from .adapter import (
-    AdapterRegistry,
-    AgentEvent,
-    BaseAdapter,
-    OneBotV11Adapter,
-    OneBotV11Client,
-    OneBotV11Http,
-    QQOfficialAdapter,
-    TelegramAdapter,
-)
+from .adapter import AdapterRegistry, AgentEvent, BaseAdapter, ReverseDriver
 from .agent.engine import AgentEngine
 from .agent.hooks import HookManager
 from .agent.mcp import MCPManager
@@ -40,10 +31,12 @@ from .pipeline.stages import (
     ContentSafetyStage,
     DecorateStage,
     NoticeStage,
+    PluginStage,
     PreProcessStage,
     ProcessStage,
     RateLimitStage,
     RespondStage,
+    SecurityStage,
     WakeCheckStage,
 )
 from .plugins.registry import PluginRegistry
@@ -63,6 +56,53 @@ DEFAULT_CONFIG = BASE_DIR / "config.yaml"
 def _plugin_dirs() -> list[Path]:
     """外部插件扫描目录:内置示例(src/data/plugins,随 git) + 用户本地(根 data/plugins)。"""
     return [BASE_DIR / "data" / "plugins", ROOT_DIR / "data" / "plugins"]
+
+
+def _adapter_dirs() -> list[Path]:
+    """适配器插件扫描目录:内置(src/data/adapters) + 用户自定义(根 data/adapters)。"""
+    return [BASE_DIR / "data" / "adapters", ROOT_DIR / "data" / "adapters"]
+
+
+def load_adapters(
+    adapter_registry: AdapterRegistry,
+    config: Config,
+    driver: ReverseDriver | None = None,
+) -> list[tuple[str, BaseAdapter]]:
+    """从 data/adapters/ 加载平台适配器插件(非侵入式,无需修改 main.py)。
+
+    每个 .py 模块提供 `register(adapter_registry, config, driver)` 入口,
+    返回 BaseAdapter 或 None(未启用)。新增平台 = 新增一个插件文件。
+    """
+    import importlib.util
+    import sys
+
+    loaded: list[tuple[str, BaseAdapter]] = []
+    for directory in _adapter_dirs():
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.py")):
+            if path.name.startswith("_"):
+                continue
+            module_name = f"qqbot_adapter_{path.stem}"
+            sys.modules.pop(module_name, None)  # 清理缓存以支持热加载
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, path)
+                if spec is None or spec.loader is None:
+                    logger.warning("适配器插件无法解析: %s", path.name)
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+                register_fn = getattr(module, "register", None)
+                if not callable(register_fn):
+                    logger.warning("适配器插件缺少 register() 入口: %s", path.name)
+                    continue
+                adapter = register_fn(adapter_registry, config, driver)
+                if adapter is not None:
+                    loaded.append((path.stem, adapter))
+            except Exception:  # noqa: BLE001
+                logger.exception("适配器插件加载失败: %s", path.name)
+    return loaded
 
 
 def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: AuthManager) -> None:
@@ -137,15 +177,23 @@ def build_pipeline(
     db: JsonKV | None = None,
     adapter_getter: Callable[[], BaseAdapter | None] | None = None,
 ) -> PipelineScheduler:
-    """构建洋葱模型管道。NoticeStage 置于最前,先消费 notice/request 事件。"""
+    """构建洋葱模型管道。
+
+    顺序:Notice(通知) → RateLimit → ContentSafety → Security(访问控制)
+    → Plugin(NoneBot 风格插件分发) → WakeCheck(唤醒) → PreProcess →
+    Process(Agent) → Decorate → Respond。
+    插件阶段在唤醒检测之前,因此 message/regex/command handler 能看到全部消息。
+    """
     return PipelineScheduler(
         [
             NoticeStage(config, db=db, adapter_getter=adapter_getter),
-            WakeCheckStage(config, auth),
             RateLimitStage(config),
             ContentSafetyStage(config),
+            SecurityStage(config, auth),
+            PluginStage(plugin_registry, config),
+            WakeCheckStage(config),
             PreProcessStage(),
-            ProcessStage(plugin_registry, engine),
+            ProcessStage(engine),
             DecorateStage(),
             RespondStage(),
         ]
@@ -241,6 +289,15 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     # 适配器注册中心(NoticeStage 经 adapter_getter 惰性获取主适配器)
     adapter_registry = AdapterRegistry()
 
+    # 反向驱动:共享 HTTP/WS 服务端(NoneBot Driver 风格)
+    driver_cfg = config.get("driver", {})
+    driver: ReverseDriver | None = None
+    if bool(driver_cfg.get("enabled", True)):
+        driver = ReverseDriver(
+            host=driver_cfg.get("host", "127.0.0.1"),
+            port=int(driver_cfg.get("port", 6199)),
+        )
+
     # 管道
     pipeline = build_pipeline(
         config, auth, plugin_registry, engine,
@@ -249,60 +306,24 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     )
     adapter_registry.set_callback(pipeline.execute)
 
-    main_adapter = OneBotV11Adapter(
-        host=config.get("onebot.host", "127.0.0.1"),
-        port=int(config.get("onebot.port", 6199)),
-        path=config.get("onebot.path", "/ws"),
-        token=config.get("onebot.token", ""),
-        self_id=config.get("onebot.self_id", ""),
-    )
-    adapter_registry.register("qq", main_adapter)
+    # 插件依赖:适配器注册中心(供插件调用平台 API,如禁言/踢人)
+    plugin_registry.register_dependency(AdapterRegistry, adapter_registry)
 
-    if config.get("onebot_forward.enabled", False):
-        adapter_registry.register(
-            "qq_forward",
-            OneBotV11Client(
-                url=config.get("onebot_forward.url", ""),
-                token=config.get("onebot_forward.token", ""),
-                self_id=config.get("onebot_forward.self_id", ""),
-            ),
-        )
+    # 非侵入式适配器加载:data/adapters/*.py 插件(新增平台无需修改 main.py)
+    load_adapters(adapter_registry, config, driver)
+    main_adapter = adapter_registry.get("qq")
+    if main_adapter is None:
+        # 兜底:无适配器插件加载时使用内置 OneBot v11 WS
+        from .adapter import OneBotV11Adapter
 
-    if config.get("onebot_http.enabled", False):
-        adapter_registry.register(
-            "qq_http",
-            OneBotV11Http(
-                host=config.get("onebot_http.host", "127.0.0.1"),
-                port=int(config.get("onebot_http.port", 6198)),
-                path=config.get("onebot_http.path", "/onebot"),
-                http_url=config.get("onebot_http.http_url", ""),
-                token=config.get("onebot_http.token", ""),
-                self_id=config.get("onebot_http.self_id", ""),
-            ),
+        main_adapter = OneBotV11Adapter(
+            host=config.get("onebot.host", "127.0.0.1"),
+            port=int(config.get("onebot.port", 6199)),
+            path=config.get("onebot.path", "/ws"),
+            token=config.get("onebot.token", ""),
+            self_id=config.get("onebot.self_id", ""),
         )
-
-    if config.get("qq_official.enabled", False):
-        adapter_registry.register(
-            "qq_official",
-            QQOfficialAdapter(
-                host=config.get("qq_official.host", "127.0.0.1"),
-                port=int(config.get("qq_official.port", 6197)),
-                path=config.get("qq_official.path", "/qq-official"),
-                app_id=config.get("qq_official.app_id", ""),
-                app_secret=config.get("qq_official.app_secret", ""),
-                sign_secret=config.get("qq_official.sign_secret", ""),
-            ),
-        )
-
-    if config.get("telegram.enabled", False):
-        adapter_registry.register(
-            "telegram",
-            TelegramAdapter(
-                token=config.get("telegram.token", ""),
-                allowed_chat_ids=list(config.get("telegram.allowed_chat_ids", []) or []),
-                poll_timeout=float(config.get("telegram.poll_timeout", 30) or 30),
-            ),
-        )
+        adapter_registry.register("qq", main_adapter)
 
     # 回填 adapter:主 QQ 适配器作为默认发送通道
     engine.adapter = main_adapter
@@ -310,6 +331,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
 
     # 启动服务
     await cron.start()
+    if driver is not None:
+        await driver.start()
     await adapter_registry.start_all()
 
     webui: WebUIServer | None = None
@@ -341,6 +364,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
 
     # 关闭
     await adapter_registry.stop_all()
+    if driver is not None:
+        await driver.stop()
     await cron.stop()
     await sqlite_store.close()
     await mcp_manager.stop_all()
