@@ -20,9 +20,9 @@ class EdgeTTSProvider(TTSProvider):
 
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        voice = self.config.get("voice", "zh-CN-XiaoxiaoNeural")
-        rate = self.config.get("rate", "+0%")
-        volume = self.config.get("volume", "+0%")
+        voice = kwargs.get("voice") or self.config.get("voice", "zh-CN-XiaoxiaoNeural")
+        rate = kwargs.get("rate") or self.config.get("rate", "+0%")
+        volume = kwargs.get("volume") or self.config.get("volume", "+0%")
 
         def _run() -> None:
             # edge-tts 内部是 asyncio 实现,在 to_thread 里用独立事件循环

@@ -484,6 +484,23 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         llm_analyzer=_vision_analyzer if MODALITY_IMAGE in provider.modalities else None,
     )
 
+    # 向量知识库 + AIGC 生成层(参照 mainidea 知识层/生成层)
+    from .agent.generation import GenerationManager
+    from .agent.knowledge.manager import KnowledgeManager
+
+    knowledge = KnowledgeManager(
+        embedding_provider=embedding_provider,
+        rerank_provider=rerank_provider,
+        data_dir=ROOT_DIR / "data" / "knowledge",
+    )
+    generation = GenerationManager(
+        config.get("generation", {}),
+        tts_provider=tts_provider,
+        output_dir=ROOT_DIR / "data" / "generated",
+    )
+    logger.info("知识库: {}", knowledge.stats())
+    logger.info("生成层: {}", generation.stats())
+
     # 记忆 / 人格 / 钩子 / 定时任务 / 技能
     memory = MemoryStore(db)
     sqlite_store = SQLiteStore(ROOT_DIR / "data" / "memory.sqlite3")
@@ -514,6 +531,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         audit_logger=audit_logger,
         usage_tracker=usage,
         perception=perception,
+        knowledge=knowledge,
+        generation=generation,
     )
 
     # 插件注册中心

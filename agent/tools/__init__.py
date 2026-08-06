@@ -4,7 +4,13 @@ from __future__ import annotations
 from ...security.auth import AuthManager
 from .base import ToolRegistry
 from .file_tools import FileEditTool, FileReadTool, FileWriteTool, GlobTool, GrepTool
-from .knowledge import KnowledgeAddTool, KnowledgeSearchTool
+from .generation_tools import (
+    ImageGenerateTool,
+    MixedMediaTool,
+    TtsSpeakTool,
+    VideoGenerateTool,
+)
+from .knowledge import KnowledgeAddTool, KnowledgeListTool, KnowledgeSearchTool
 from .memory_tools import MemoryAddTool, MemoryListTool, MemorySearchTool
 from .mcp_tools import MCPServerListTool
 from .network import WebFetchTool, WebSearchTool
@@ -52,6 +58,7 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         TaskTools(),
         KnowledgeAddTool(),
         KnowledgeSearchTool(),
+        KnowledgeListTool(),
         QqKickTool(),
         QqMuteTool(),
         QqSetAdminTool(),
@@ -85,6 +92,10 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         VideoSummarizeTool(),
         DocumentParseTool(),
         MediaAnalyzeTool(),
+        ImageGenerateTool(),
+        VideoGenerateTool(),
+        TtsSpeakTool(),
+        MixedMediaTool(),
     ):
         registry.register(tool)
     return registry

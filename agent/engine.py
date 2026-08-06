@@ -107,6 +107,8 @@ class AgentEngine:
         audit_logger: Any = None,
         usage_tracker: Any = None,
         perception: Any = None,
+        knowledge: Any = None,
+        generation: Any = None,
     ):
         self.provider = provider
         self.tools = tools
@@ -125,6 +127,8 @@ class AgentEngine:
         self.mcp_manager = mcp_manager
         self.audit_logger = audit_logger
         self.perception = perception
+        self.knowledge = knowledge
+        self.generation = generation
         self._static_prompt: str | None = None
         self.messages_processed = 0  # 累计处理消息数(WebUI 统计)
 
@@ -766,5 +770,7 @@ class AgentEngine:
                 "mcp_manager": self.mcp_manager,
                 "audit_logger": self.audit_logger,
                 "perception": self.perception,
+                "knowledge": self.knowledge,
+                "generation": self.generation,
             },
         )

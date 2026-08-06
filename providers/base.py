@@ -273,6 +273,10 @@ def create_embedding_provider(config: dict[str, Any]) -> EmbeddingProvider:
         from .sources.embedding_openai import OpenAIEmbeddingProvider
 
         return OpenAIEmbeddingProvider(config or {})
+    if ptype in ("local", "sentence-transformers", "sentence_transformers"):
+        from .sources.embedding_local import LocalEmbeddingProvider
+
+        return LocalEmbeddingProvider(config or {})
     raise ValueError(f"未知 Embedding Provider: {ptype}")
 
 

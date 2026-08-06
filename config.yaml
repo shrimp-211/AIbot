@@ -110,6 +110,28 @@ provider_rerank:
   api_key: ${COHERE_API_KEY:-}
   model: rerank-multilingual-v3.0
 
+# ---------- 向量知识库(RAG) ----------
+# 文本分块 → Embedding → FAISS + BM25 混合检索;依赖缺失自动降级关键词检索
+knowledge:
+  data_dir: data/knowledge
+  chunk_size: 800            # 每块目标字符数
+  chunk_strategy: semantic   # semantic | fixed | markdown
+  top_k: 5                   # 单次检索返回文档数
+
+# ---------- AIGC 生成层 ----------
+generation:
+  output_dir: data/generated
+  image:
+    backend: pollinations    # pollinations(免费,无需Key) | openai(DALL·E,需Key)
+    api_key: ${OPENAI_API_KEY:-}
+    model: dall-e-3
+    size: "1024x1024"
+  video:
+    api_key: ${RUNWAY_API_KEY:-}   # Runway Gen 系列,任务式 API
+    model: gen3a_turbo
+  music:
+    enabled: false           # Suno/自建音乐服务,预留(需 api_key)
+
 # ---------- MCP(Model Context Protocol)外部工具 ----------
 # 每个服务器: name/command/args/env/permission_level
 # 示例: 接入 GitHub 官方 MCP 服务器
