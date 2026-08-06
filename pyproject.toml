@@ -17,11 +17,16 @@ dependencies = [
 anthropic = ["anthropic>=0.40"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4"]
 
+[project.scripts]
+qqbot = "src.main:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-# 运行方式:在 src/ 目录执行 `python -m src.main`
-# 本文件仅用于声明依赖与元数据,不强制打包安装
+# 仓库根即 `src` 包:clone 后 `pip install -e .` 即可在任意目录 `python -m src.main` / `qqbot`
 [tool.setuptools]
-py-modules = []
+packages = ["src"]
+
+[tool.setuptools.package-dir]
+src = "."

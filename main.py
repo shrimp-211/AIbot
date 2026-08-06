@@ -47,7 +47,7 @@ from .providers.base import create_provider
 from .security.audit import AuditLogger
 from .security.auth import AuthManager
 from .storage.db import JsonKV
-from .utils.config import Config, load_config
+from .utils.config import Config, load_config, load_dotenv
 from .utils.logger import setup_logger
 from .webui.server import WebUIServer
 
@@ -371,6 +371,9 @@ def _warn_security_posture(config: Config) -> None:
 
 
 async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO") -> None:
+    # 加载 .env(项目根与代码目录,真实环境变量优先),供 config.yaml 的 ${ENV_VAR} 引用
+    load_dotenv(ROOT_DIR / ".env")
+    load_dotenv(BASE_DIR / ".env")
     config = load_config(config_path)
     setup_logger(level=log_level, log_dir=ROOT_DIR / "data" / "logs")
     logger.info(f"加载配置: {config_path}")

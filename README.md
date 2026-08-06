@@ -23,6 +23,8 @@
 | 插件 | 外部插件热加载、4 种 handler、依赖注入(含 AdapterRegistry)、plugin.json 元数据 |
 | 安全 | 7 级权限 + deny→ask→allow 三层决策 + 可信目录/沙箱 + 审计日志 |
 | 平台 | ReverseDriver 共享服务端 + 适配器插件化(`data/adapters/`)、OneBot(反向WS/正向WS/HTTP)、QQ 官方 Webhook、Telegram |
+| 反馈 | 私聊/WebUI 实时处理进度(⏳ 思考中 / 🔧 正在执行),群聊自动抑制不刷屏 |
+| 统计 | LLM token 用量与估算成本统计(`/cost` + WebUI 状态页),模型热切换(`/model`) |
 | 管理 | WebUI 控制台(状态/工具/任务/广播/MCP/技能/审计/子代理) |
 
 ## 快速开始
@@ -30,20 +32,34 @@
 ### 1. 安装依赖
 
 ```bash
-pip install aiohttp httpx loguru pyyaml openai
+# Python 3.10+
+pip install -r requirements.txt
 ```
 
-可选(Anthropic 模型):`pip install anthropic`
+可选(Anthropic 模型):`pip install -r requirements.txt` 后 `pip install anthropic`,或 `pip install ".[anthropic]"`。
+
+若要让 `src` 包在任意目录可导入(推荐,CI/Docker 同此方式):
+
+```bash
+pip install -e .
+```
 
 ### 2. 配置
 
-编辑 `src/config.yaml`:
+复制环境变量模板并按需填写(启动时自动加载 `.env`):
+
+```bash
+cp .env.example .env
+# 编辑 .env,填入 LLM_API_KEY 等
+```
+
+再编辑 `config.yaml`:
 
 - `driver.port` — 反向驱动端口(默认 6199,WS/HTTP 适配器共享),与 OneBot 客户端保持一致
 - `onebot.path` — WebSocket 路径(默认 `/ws`);`onebot_http.path`/`qq_official.path` 为同端口下的子路径
-- `llm.provider` — 设置模型与 API Key(建议环境变量 `${LLM_API_KEY:-}`)
-- `security.super_admin_users` — 改为你自己的 QQ 号
-- `webui.password` — 管理密码
+- `llm.provider` — 设置模型与 API Key(建议用 `.env` 的 `LLM_API_KEY` 注入)
+- `security.super_admin_users` — 改为你自己的 QQ 号(启动时会警告占位符)
+- `webui.password` — 管理密码(留空则首次启动随机生成)
 - `notice.*` — 群欢迎/欢送/防撤回/请求审批策略
 - `mcp.servers` — MCP 外部工具服务器
 
@@ -63,7 +79,17 @@ python -m src.main
 
 也支持正向 WebSocket、HTTP 上报模式(`onebot_forward`/`onebot_http` 配置段)。
 
-### 5. 使用
+### 5. Docker 一键部署(可选)
+
+```bash
+docker compose up -d
+```
+
+- `data/` 目录挂载持久化(agent.json / auth.json / memory.sqlite3 / audit.jsonl)
+- 环境变量从宿主机或同目录 `.env` 读取
+- 需修改模型/权限时:复制 `config.yaml` 为 `config.local.yaml` 调整,或直接改配置后 `docker compose restart`
+
+### 6. 使用
 
 在群里 **@机器人** 或私聊发送需求:
 
@@ -133,9 +159,16 @@ def setup(registry) -> None:
 | 命令 | 权限 | 说明 |
 |---|---|---|
 | `/help` `帮助` | 所有人 | 列出全部工具 |
-| `/status` `状态` | 所有人 | 运行状态 |
+| `/status` `状态` | 所有人 | 运行状态(模型/工具数/处理量) |
 | `/whoami` | 所有人 | 查看用户信息 |
+| `/clear` | 所有人 | 清空当前会话上下文 |
+| `/cost` | 所有人 | LLM 用量与成本统计(私聊看自己,群聊看全局) |
+| `/persona` | 所有人 | 列出/切换人格(`reset` 回默认) |
+| `/skills` | 所有人 | 列出/激活技能(`stop` 停止) |
+| `/plan` | 所有人 | 查看当前会话的 Agent 计划 |
+| `/session` | 所有人 | 检查点:`/session save/load/clear` |
 | `/approve <码>` | 超级管理员 | 批准私聊配对 |
+| `/model <名>` | 超级管理员 | 查看/热切换 LLM 模型 |
 | `/plugins` | 所有人 | 列出外部插件及元数据 |
 | `/plugin reload` | 超级管理员 | 热重载全部插件 |
 
@@ -183,12 +216,24 @@ src/
 ## 测试
 
 ```bash
-# 导入自检
+# 导入自检(初始化顺序正确性)
 python -c "import src.main"
 
-# 工具集成测试(12 项)
+# 核心单元测试(47 项:引擎/管道/适配器/记忆/插件/安全)
+python -m src.tests.core_tests
+
+# 工具集成测试(13 项:每个工具端到端调用)
 python -m src.tests.tools_integration_test
+
+# 插件加载测试(外部插件自动发现与元数据)
+python -m src.tests.plugin_load_test
 ```
+
+CI(GitHub Actions)会对 Python 3.10/3.11/3.12 三版本运行上述全部测试。
+
+## 常见问题
+
+连接不上 / 模型报错 / 群聊无响应等排查方法,见 [FAQ.md](FAQ.md)。
 
 ## 许可证
 

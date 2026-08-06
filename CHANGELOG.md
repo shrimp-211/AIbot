@@ -2,6 +2,29 @@
 
 本项目的变更记录。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.3.0] - 2026-08-07
+
+### 新增
+- **交互反馈层**(参考 AstrBot 消息管道):私聊/WebUI 实时处理进度——思考中 `⏳`、正在执行 `🔧`;群聊自动抑制不刷屏
+- **会话命令体系**(`src/main.py` 内置插件):
+  - `/clear` 清空当前会话上下文
+  - `/cost` LLM 用量与估算成本统计(私聊看自己、群聊看全局,避免暴露他人)
+  - `/model <名>` 运行时热切换模型(同步推断上下文窗口)
+  - `/persona <id>` 列出/切换人格(参考 AstrBot 人格系统)
+  - `/skills` 列出/激活/停止技能
+  - `/plan` 查看当前会话的 Agent 计划
+  - `/session save/load/clear` 会话检查点
+- **用量统计 `UsageTracker`**(`agent/usage.py`):按模型前缀估算成本(opus/sonnet/haiku/deepseek 等),totals/by_user/history 持久化到 JsonKV,接入 WebUI 状态页
+- **Provider 使用量透出**:OpenAI 兼容(`resp.usage`)与 Anthropic(`resp.usage.input/output_tokens`)统一为 `{"prompt_tokens", "completion_tokens"}`
+
+### 变更(开源工程化)
+- **开箱即用**:`pyproject.toml` 通过 `[tool.setuptools.package-dir] src = "."` 将仓库根注册为 `src` 包,`pip install -e .` 后 `python -m src.main` 可在任意目录运行
+- **`requirements.txt`** 收敛基础依赖 + 可选组注释;新增 `.env.example` 模板
+- **`load_dotenv`**(`utils/config.py`):启动自动加载 `.env`(setdefault 不覆盖真实环境变量)
+- **Docker 一键部署**:`Dockerfile`(python:3.11-slim) + `docker-compose.yml`(`data/` 持久化挂载、可选 `config.local.yaml` 覆盖)+ `.dockerignore`
+- **GitHub Actions CI**(`.github/workflows/ci.yml`):Python 3.10/3.11/3.12 矩阵跑导入自检 + core_tests + tools_integration_test + plugin_load_test
+- **文档**:README 重写快速开始/命令表/测试章节;新增 `FAQ.md`(连接/模型/群聊无响应/Webhook 验签/Docker/安全排查)
+
 ## [1.2.0] - 2026-08-06
 
 ### 新增

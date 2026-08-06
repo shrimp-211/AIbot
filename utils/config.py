@@ -329,6 +329,34 @@ def load_config(path: str | Path) -> Config:
     return Config(resolved, path=path)
 
 
+_DOTENV_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
+
+
+def load_dotenv(path: str | Path | None = None) -> None:
+    """从 .env 文件加载环境变量到 os.environ(不覆盖已存在的值)。
+
+    找不到文件或解析失败时静默跳过,不阻断启动。用于填充 config.yaml 中的
+    ${ENV_VAR} 引用(如 LLM_API_KEY),避免引第三方 python-dotenv 依赖。
+    """
+    path = Path(path) if path else Path.cwd() / ".env"
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _DOTENV_RE.match(line)
+        if not m:
+            continue
+        key, value = m.group(1), m.group(2).strip().strip("'\"")
+        # 真实环境变量优先于 .env 中的值
+        os.environ.setdefault(key, value)
+
+
 def save_config(path: str | Path, data: dict[str, Any]) -> list[str]:
     """原子写回 YAML 配置(tmp 文件 + replace),返回校验错误(若有)。"""
     errors = validate_config(data)
