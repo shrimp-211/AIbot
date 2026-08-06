@@ -126,9 +126,9 @@ class AuthManager:
         self._approval_ttl = 600  # 审批码有效期(秒)
         # 工具级交互审批(Claude Code 权限批准):user_id -> 待审批的工具请求
         self.pending_tool_approvals: dict[str, dict] = {}
-        # 临时工具授权(user_id, tool) -> {"ts", "ttl"}:批准后短时放行
+        # 短期放行(user_id, tool) -> {"ts", "ttl"}:批准后 TTL 内同用户同工具跳过工具级门禁
         self._temp_tool_allows: dict[tuple[str, str], dict] = {}
-        self._tool_approval_ttl = 300  # 工具审批请求有效期(秒)
+        self._tool_approval_ttl = 120  # 工具审批请求/放行有效期(秒)
 
     # ---------- 角色 ----------
 
@@ -234,8 +234,11 @@ class AuthManager:
         for uid in stale:
             self.pending_tool_approvals.pop(uid, None)
 
-    def allow_tool(self, user_id: str, tool: str, ttl: float = 300) -> None:
-        """授予一次性临时工具权限(带 TTL,定期清理防泄漏)。"""
+    def allow_tool(self, user_id: str, tool: str, ttl: float = 120) -> None:
+        """批准后短期放行:TTL 内同用户同工具跳过工具级门禁(定期清理防泄漏)。
+
+        仅绕过规则门禁;工具内部的 path/command 安全检查仍生效。
+        """
         self._prune_temp_allows()
         self._temp_tool_allows[(user_id, tool)] = {"ts": time.time(), "ttl": ttl}
 

@@ -824,6 +824,9 @@ async def test_classify_approval():
     assert _classify_approval("拒绝") == "deny"
     assert _classify_approval("不行") == "deny"
     assert _classify_approval("不需要") == "deny"
+    # 否定式拒绝词不能被"同意/批准"子串误判为允许
+    assert _classify_approval("不同意") == "deny"
+    assert _classify_approval("不批准") == "deny"
     assert _classify_approval("可以帮我看看这个文件吗") is None  # 长句不误判
     assert _classify_approval("") is None
     assert _classify_approval("随便聊聊今天天气如何啊哈哈哈哈") is None

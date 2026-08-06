@@ -106,12 +106,11 @@ class AnthropicProvider(BaseProvider):
         )
         if self.thinking_enabled:
             # extended thinking 与 temperature 互斥:启用时不传 temperature
-            params["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": min(
-                    self.thinking_budget, params["max_tokens"] - 1
-                ),
-            }
+            if params["max_tokens"] > 1024:
+                # Anthropic 要求 budget_tokens >= 1024 且 < max_tokens
+                budget = min(self.thinking_budget, params["max_tokens"] - 1)
+                params["thinking"] = {"type": "enabled", "budget_tokens": max(1024, budget)}
+            # max_tokens 过小无法启用 thinking:跳过 thinking 与 temperature
         else:
             params["temperature"] = kwargs.get("temperature", self.temperature)
         if system_prompt:

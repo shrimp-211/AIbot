@@ -20,6 +20,9 @@ class OpenAICompatibleProvider(BaseProvider):
         super().__init__(config)
         # reasoning_effort(OpenAI o1/o3 系列):配置时替代 temperature
         self.reasoning_effort = config.get("reasoning_effort")
+        if self.reasoning_effort not in (None, "low", "medium", "high"):
+            logger.warning("忽略非法的 reasoning_effort: {}", self.reasoning_effort)
+            self.reasoning_effort = None
         self._client = AsyncOpenAI(
             api_key=self.api_key or "sk-not-set",
             base_url=self.base_url or None,

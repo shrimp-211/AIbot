@@ -59,13 +59,14 @@ def _classify_approval(text: str) -> str | None:
     t = text.strip().lower().rstrip("。.!！?？~～")
     if not t or len(t) > 16:
         return None
+    # 否定式拒绝词优先,防止"不同意/不批准"被"同意/批准"子串误判为允许
+    if any(w in t for w in ("不同意", "不批准", "不确认", "不授权", "拒绝", "取消", "不需要", "不了")):
+        return "deny"
     if any(w in t for w in ("允许", "批准", "同意", "确认", "授权")):
         return "approve"
-    if any(w in t for w in ("拒绝", "不同意", "取消", "不需要", "不批准")):
-        return "deny"
     if t in ("可以", "yes", "y", "ok", "okay", "allow", "approve", "继续", "好", "行"):
         return "approve"
-    if t in ("no", "n", "deny", "不行", "不要", "别", "不了"):
+    if t in ("no", "n", "deny", "不行", "不要", "别"):
         return "deny"
     return None
 
@@ -140,11 +141,8 @@ class AgentEngine:
         if not text and event.is_tome:
             text = "(用户@了你)"
 
-        fast = self._nlu_fast_path(event, text)
-        if fast is not None:
-            return fast
-
         # 工具审批续接:上一轮请求权限批准,本轮检测用户的允许/拒绝(Claude Code 权限批准)
+        # 放在 fast path 之前,确保审批回复优先处理,且非审批回复(含 STOP)会放弃挂起的审批
         approval_reply = False
         pending = self.auth.get_pending_tool_approval(event.user_id)
         if pending:
@@ -155,8 +153,12 @@ class AgentEngine:
                 event.state["approval_decision"] = decision
                 event.state["approval_tool"] = pending["tool"]
             else:
-                # 用户转向新请求:放弃挂起的审批
+                # 用户转向新请求(或要求停止):放弃挂起的审批
                 self.auth.resolve_tool_approval(event.user_id, False)
+
+        fast = self._nlu_fast_path(event, text)
+        if fast is not None:
+            return fast
 
         # 技能自动匹配:当前无激活技能时,若消息强匹配某技能描述则自动激活
         if self.skills is not None and self.skills.active(event.session_id) is None:
@@ -171,7 +173,8 @@ class AgentEngine:
         await self._load_memory_context(event, text)
 
         # ask_user 续接:上一轮向用户提问后,本轮注入提示并清除待答标记
-        if self.memory is not None:
+        # 审批回复是元消息(允许/拒绝),不是对 ask_user 问题的回答,跳过续接
+        if not approval_reply and self.memory is not None:
             pending = self.memory.get_pending_question(event.session_id)
             if pending:
                 event.state["awaiting_question"] = pending.get("question", "")
@@ -591,18 +594,22 @@ class AgentEngine:
         from ..adapter.message import escape_cq
 
         user_id = ctx.event.user_id
-        record = self.auth.request_tool_approval(user_id, exc.tool_name, exc.args)
         args_preview = json.dumps(exc.args, ensure_ascii=False)[:200]
+        group_hint = "\n(群聊中请 @我 后回复)" if ctx.event.message_type == "group" else ""
         msg = (
             "🔐 需要你的授权:\n"
             f"Agent 想执行工具 **{escape_cq(exc.tool_name)}**\n"
             f"参数: `{escape_cq(args_preview)}`\n"
             "回复【允许】继续,或【拒绝】取消。"
+            + group_hint
         )
         try:
             await ctx.event.reply(msg)
         except Exception:  # noqa: BLE001
+            # 审批请求未送达:不挂起审批,避免用户从未看到请求却被静默批准
             logger.exception("发送审批请求失败")
+            return "审批请求发送失败,请稍后再试。"
+        record = self.auth.request_tool_approval(user_id, exc.tool_name, exc.args)
         logger.info("工具 {} 请求审批(user={}, ts={:.0f})", exc.tool_name, user_id, record["ts"])
         return json.dumps(
             {

@@ -89,7 +89,12 @@ class BaseProvider(ABC):
         ):
             return True
         code = getattr(exc, "status_code", None)
+        if code is None:
+            # httpx 等库把状态码放在 exc.response.status_code(HTTPStatusError)
+            response = getattr(exc, "response", None)
+            code = getattr(response, "status_code", None)
         if code is not None:
+            # 仅限流(429)与 5xx 重试,4xx 永久性错误不重试
             return code in cls._RETRYABLE_CODES
         # 传输层库异常兜底(httpx / aiohttp)
         mod = type(exc).__module__ or ""
