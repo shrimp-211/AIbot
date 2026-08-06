@@ -131,11 +131,17 @@ class QqOcrTool(Tool):
         )
         if isinstance(result, dict) and "error" in result:
             return result
-        # go-cqhttp 返回 {texts: [{text, confidence, coordinates}]} 或 {texts: "..."}
+        # go-cqhttp 返回 {texts: [{text, confidence, coordinates}]} / {texts: "..."} / {texts: [...]}
         texts = result.get("texts", []) if isinstance(result, dict) else result
         if isinstance(texts, str):
             return {"content": texts or "(未识别到文字)"}
         if isinstance(texts, list):
-            lines = [t.get("text", "") for t in texts if isinstance(t, dict)]
+            lines = []
+            for t in texts:
+                if isinstance(t, dict):
+                    lines.append(str(t.get("text", "")))
+                elif t:  # 实现端可能直接返回字符串列表
+                    lines.append(str(t))
+            lines = [l for l in lines if l]
             return {"content": "\n".join(lines) or "(未识别到文字)", "confidence": texts}
         return {"content": str(result or "(未识别到文字)")}

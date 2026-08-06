@@ -155,7 +155,9 @@ class KnowledgeManager:
             if self.embedding is not None:
                 try:
                     vectors = await self.embedding.embed(chunks)
-                    self.vector.add(self._l2_normalize(vectors), vec_ids)
+                    normalized = self._l2_normalize(vectors)
+                    # faiss 写盘(写 index.faiss)较重,放 worker 线程避免阻塞事件循环
+                    await asyncio.to_thread(self.vector.add, normalized, vec_ids)
                     vector_ok = True
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("向量入库失败(保留文本,检索走关键词): {}", exc)
@@ -182,7 +184,7 @@ class KnowledgeManager:
             ]
             if vec_ids:
                 try:
-                    self.vector.remove(vec_ids)
+                    await asyncio.to_thread(self.vector.remove, vec_ids)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("FAISS 删除失败: {}", exc)
             for cid in doc.get("chunk_ids", []):

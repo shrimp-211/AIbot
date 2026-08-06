@@ -12,7 +12,7 @@ from typing import Any
 
 from loguru import logger
 
-from .base import BaseProvider, create_provider
+from .base import DEFAULT_MODALITIES, BaseProvider, create_provider
 
 
 class ProviderManager(BaseProvider):
@@ -101,6 +101,16 @@ class ProviderManager(BaseProvider):
     def active(self) -> BaseProvider:
         """最近一次成功调用的 provider(无调用时为主 provider)。"""
         return self._active
+
+    @property
+    def modalities(self) -> frozenset[str]:
+        """委托到活动 provider 的模态能力(类属性会被遮蔽,故显式委托)。"""
+        return getattr(self._active, "modalities", DEFAULT_MODALITIES)
+
+    @property
+    def image_block_format(self) -> str:
+        """委托到活动 provider 的图片块协议格式。"""
+        return getattr(self._active, "image_block_format", "openai")
 
     def __getattr__(self, name: str) -> Any:
         active = self.__dict__.get("_active")

@@ -2,9 +2,14 @@
 
 媒体文件支持 URL 或本地路径:URL 先下载到临时目录再交给感知器。
 感知器经 ToolContext.extra["perception"] 注入(由 main.py 构建 PerceptionManager)。
+
+临时文件管理:URL 下载的临时文件在工具执行结束后由 finally 清理(防磁盘泄漏);
+本地路径直接使用,不删除。
 """
 from __future__ import annotations
 
+import asyncio
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -23,8 +28,11 @@ _MEDIA_EXT_BY_KIND = {
 _MEDIA_FALLBACK_EXT = {k: v[0] for k, v in _MEDIA_EXT_BY_KIND.items()}
 
 
-async def _resolve_media(path_or_url: str, kind: str) -> str:
-    """URL 下载到临时文件,本地路径直接返回;解析失败抛 RuntimeError。"""
+async def _resolve_media(path_or_url: str, kind: str) -> tuple[str, bool]:
+    """解析媒体为本地路径,返回 (路径, 是否为临时下载文件)。
+
+    URL 下载到临时文件(调用方负责 finally 清理);本地路径直接返回。
+    """
     if not path_or_url:
         raise RuntimeError(f"未提供{kind}文件")
     if path_or_url.startswith(("http://", "https://")):
@@ -38,11 +46,21 @@ async def _resolve_media(path_or_url: str, kind: str) -> str:
         if suffix not in allowed:
             suffix = _MEDIA_FALLBACK_EXT.get(kind, ".bin")
         tmp = Path(tempfile.gettempdir()) / f"qqbot_{kind}_{int(time.time() * 1000)}{suffix}"
-        tmp.write_bytes(resp.content)
-        return str(tmp)
+        # 同步写盘放 worker 线程,避免阻塞事件循环
+        await asyncio.to_thread(tmp.write_bytes, resp.content)
+        return str(tmp), True
     if Path(path_or_url).is_file():
-        return path_or_url
+        return path_or_url, False
     raise RuntimeError(f"{kind}文件不存在: {path_or_url}")
+
+
+async def _cleanup_temp(path: str, is_temp: bool) -> None:
+    """best-effort 删除临时下载文件,失败仅静默忽略不影响结果。"""
+    if is_temp and path:
+        try:
+            await asyncio.to_thread(os.remove, path)
+        except OSError:
+            pass
 
 
 class VisionAnalyzeTool(Tool):
@@ -63,7 +81,7 @@ class VisionAnalyzeTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path = await _resolve_media(image, "image")
+            path, is_temp = await _resolve_media(image, "image")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -73,6 +91,8 @@ class VisionAnalyzeTool(Tool):
             return {"content": result}
         except RuntimeError as exc:
             return {"error": str(exc)}
+        finally:
+            await _cleanup_temp(path, is_temp)
 
 
 class OcrTool(Tool):
@@ -93,7 +113,7 @@ class OcrTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path = await _resolve_media(image, "image")
+            path, is_temp = await _resolve_media(image, "image")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -101,6 +121,8 @@ class OcrTool(Tool):
             return {"content": text or "(未识别到文字)", "char_count": len(text)}
         except RuntimeError as exc:
             return {"error": str(exc)}
+        finally:
+            await _cleanup_temp(path, is_temp)
 
 
 class AudioTranscribeTool(Tool):
@@ -120,7 +142,7 @@ class AudioTranscribeTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path = await _resolve_media(audio, "audio")
+            path, is_temp = await _resolve_media(audio, "audio")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -128,6 +150,8 @@ class AudioTranscribeTool(Tool):
             return {"content": text or "(未识别到语音)"}
         except RuntimeError as exc:
             return {"error": str(exc)}
+        finally:
+            await _cleanup_temp(path, is_temp)
 
 
 class VideoSummarizeTool(Tool):
@@ -147,7 +171,7 @@ class VideoSummarizeTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path = await _resolve_media(video, "video")
+            path, is_temp = await _resolve_media(video, "video")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -155,6 +179,8 @@ class VideoSummarizeTool(Tool):
             return {"content": result}
         except RuntimeError as exc:
             return {"error": str(exc)}
+        finally:
+            await _cleanup_temp(path, is_temp)
 
 
 class DocumentParseTool(Tool):
@@ -173,7 +199,7 @@ class DocumentParseTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path = await _resolve_media(file, "document")
+            path, is_temp = await _resolve_media(file, "document")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -185,6 +211,8 @@ class DocumentParseTool(Tool):
             }
         except RuntimeError as exc:
             return {"error": str(exc)}
+        finally:
+            await _cleanup_temp(path, is_temp)
 
 
 class MediaAnalyzeTool(Tool):
@@ -209,7 +237,7 @@ class MediaAnalyzeTool(Tool):
         if kind == "unknown" and file.startswith(("http://", "https://")):
             kind = "image"  # 无扩展名 URL 默认按图片处理
         try:
-            path = await _resolve_media(file, kind if kind != "unknown" else "document")
+            path, is_temp = await _resolve_media(file, kind if kind != "unknown" else "document")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -217,3 +245,5 @@ class MediaAnalyzeTool(Tool):
             return {"kind": result["kind"], "result": str(result["result"])[:4000]}
         except RuntimeError as exc:
             return {"error": str(exc)}
+        finally:
+            await _cleanup_temp(path, is_temp)

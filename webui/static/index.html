@@ -463,7 +463,9 @@ function sendChat() {
   if (!text || !chatWs || chatWs.readyState !== 1) return;
   addChat('user', text);
   $('chatInput').value = '';
-  chatWs.send(JSON.stringify({ text }));
+  let clientId = localStorage.getItem('webui_client_id');
+  if (!clientId) { clientId = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('webui_client_id', clientId); }
+  chatWs.send(JSON.stringify({ text, user_id: clientId }));
 }
 async function sendBroadcast() {
   const group_id = $('broadcastGroup').value.trim();

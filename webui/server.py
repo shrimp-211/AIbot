@@ -429,15 +429,25 @@ class WebUIServer:
             )
         # 视图里的掩码占位符不落盘:回填"磁盘原文"(未解析环境变量的值),
         # 否则会把 ${ENV_VAR} 引用的密钥明文烤进 YAML 并落盘。
+        # 磁盘原文读取失败时宁可中止保存,也不能让掩码字面量覆盖密钥。
         try:
-            current_raw = yaml.safe_load(
+            raw_content = (
                 self._config_path.read_text(encoding="utf-8")
                 if self._config_path.is_file()
                 else ""
             )
-        except (OSError, yaml.YAMLError):
-            current_raw = {}
-        _restore_secrets(new_data, current_raw if isinstance(current_raw, dict) else {})
+            current_raw = yaml.safe_load(raw_content)
+        except (OSError, yaml.YAMLError) as exc:
+            logger.warning("配置保存前读取磁盘原文失败,中止: {}", exc)
+            return web.json_response(
+                {"ok": False, "error": f"无法读取当前配置原文,已中止保存(防密钥被覆盖): {exc}"},
+                status=500,
+            )
+        if not isinstance(current_raw, dict):
+            return web.json_response(
+                {"ok": False, "error": "当前配置原文解析失败,已中止保存"}, status=500
+            )
+        _restore_secrets(new_data, current_raw)
         try:
             def _write() -> tuple[str, list[str]]:
                 backup = self._config_path.read_text(encoding="utf-8")[:200] if self._config_path.is_file() else ""
@@ -754,6 +764,10 @@ class WebUIServer:
             except Exception:  # noqa: BLE001
                 logger.exception("WebUI 聊天处理异常")
                 reply = "处理出错,请查看服务端日志。"
-            if reply and not ws.closed:
-                await ws.send_str(json.dumps({"role": "assistant", "text": reply}))
+            if reply:
+                try:
+                    # closed 检查与 send_str 之间存在断线竞态,这里兜底
+                    await ws.send_str(json.dumps({"role": "assistant", "text": reply}))
+                except (RuntimeError, ConnectionError):
+                    return ws
         return ws

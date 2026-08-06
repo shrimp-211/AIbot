@@ -457,8 +457,12 @@ class PerceptionManager:
             doc = await self.document.parse(file_path)
             return {"kind": "document", "result": doc["content"][:2000], "meta": {k: v for k, v in doc.items() if k != "content"}}
         if kind == "code":
-            code = await asyncio.to_thread(
-                lambda: Path(file_path).read_text(encoding="utf-8", errors="replace")
-            )
-            return {"kind": "code", "result": self.code.analyze(code, file_path)}
+            def _read_code() -> str:
+                # 截断超大文件,避免一次性读入数 MB
+                return Path(file_path).read_text(encoding="utf-8", errors="replace")[:200_000]
+
+            code = await asyncio.to_thread(_read_code)
+            # 逐行正则分析是 CPU 密集,放 worker 线程
+            result = await asyncio.to_thread(self.code.analyze, code, file_path)
+            return {"kind": "code", "result": result}
         return {"kind": "unknown", "result": f"暂不支持分析该文件类型: {file_path}"}
