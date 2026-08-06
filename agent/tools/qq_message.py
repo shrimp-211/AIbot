@@ -56,7 +56,7 @@ class QqRecallTool(Tool):
         },
         "required": ["message_id"],
     }
-    permission_level = 1
+    permission_level = 4  # 撤消息影响群秩序,仅管理员及以上
 
     async def execute(self, ctx: ToolContext, message_id: int) -> Any:
         try:

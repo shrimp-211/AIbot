@@ -12,6 +12,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 
 class JsonKV:
     """线程安全的 JSON 键值存储,异步后台定时刷盘。"""
@@ -50,7 +52,11 @@ class JsonKV:
     async def _flush_loop(self) -> None:
         while True:
             await asyncio.sleep(self._flush_interval)
-            await self.flush()
+            try:
+                await self.flush()
+            except Exception:  # noqa: BLE001
+                # 瞬时写错误(磁盘满/权限)不应杀死后台刷盘,下个周期重试
+                logger.exception("JsonKV 后台刷盘失败,将在下个周期重试")
 
     def start(self) -> None:
         """启动后台刷盘循环。"""
@@ -65,16 +71,24 @@ class JsonKV:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        await self.flush()
+        try:
+            await self.flush()
+        except Exception:  # noqa: BLE001
+            logger.exception("JsonKV 停止时刷盘失败")
 
     async def flush(self) -> None:
-        """立即把脏数据写盘。"""
+        """立即把脏数据写盘;写失败恢复脏标记,避免数据丢失。"""
         if not self._dirty:
             return
         with self._lock:
             data = dict(self._data)
             self._dirty = False
-        await asyncio.to_thread(self._write, data)
+        try:
+            await asyncio.to_thread(self._write, data)
+        except Exception:
+            # 写失败:恢复脏标记,下个周期(或调用方)重试,防止丢失数据
+            self._dirty = True
+            raise
 
     def _write(self, data: dict[str, Any]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

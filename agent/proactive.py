@@ -77,9 +77,12 @@ class CronManager:
         if now < task.get("next_at", 0):
             return
         await self._fire(task)
+        # 所有类型都在推进 next_at 后持久化:否则 interval 任务重启后
+        # next_at 仍是旧值(已过去),导致每次重启立即重触发一次
         if task.get("type") == "interval":
             task["next_at"] = now + task.get("interval", 60)
             task["last_fired"] = now
+            self._persist_tasks()
         elif task.get("type") == "one_shot":
             self._tasks.pop(tid, None)
             self._persist_tasks()

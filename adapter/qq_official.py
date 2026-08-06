@@ -62,6 +62,10 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
         await self._start_server("QQ 官方 Webhook")
         self._session = aiohttp.ClientSession()
         self._running = True
+        if not self.sign_secret:
+            logger.warning(
+                "QQ 官方适配器未配置 sign_secret,webhook 验签 fail-closed(将拒绝所有事件上报)"
+            )
 
     async def stop(self) -> None:
         self._running = False
@@ -74,14 +78,28 @@ class QQOfficialAdapter(ReverseServerMixin, BaseAdapter):
     # ---------- 签名验证 ----------
 
     def _verify_signature(self, request: web.Request, body: bytes) -> bool:
-        """验证 QQ 官方 webhook 签名(需配置 sign_secret;为空则跳过)。"""
+        """验证 QQ 官方 webhook 签名(需配置 sign_secret)。
+
+        未配置 sign_secret 时 fail-closed(拒绝所有请求),避免部署者误以为
+        已验签;同时校验 X-Timestamp 新鲜度(±5 分钟),防重放攻击。
+        """
         if not self.sign_secret:
-            return True
+            logger.warning("QQ 官方适配器未配置 sign_secret,拒绝 webhook 请求")
+            return False
+        timestamp = request.headers.get("X-Timestamp", "")
+        if timestamp:
+            try:
+                ts = float(timestamp)
+            except (TypeError, ValueError):
+                logger.warning("QQ 官方 webhook 时间戳格式非法,跳过新鲜度检查")
+            else:
+                if abs(time.time() - ts) > 300:
+                    logger.warning("QQ 官方 webhook 时间戳过期(可能重放),拒绝")
+                    return False
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("sha256="):
             logger.warning("QQ 官方 webhook 缺少 sha256 签名头")
             return False
-        timestamp = request.headers.get("X-Timestamp", "")
         nonce = request.headers.get("X-Nonce", "")
         calc = hashlib.sha256(
             (self.sign_secret + timestamp + nonce + body.decode("utf-8", "ignore")).encode()

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -213,6 +214,13 @@ class AgentEngine:
             self.db.set(key, n)
             if n % 8 != 0:
                 return
+            # 成本保护:两次反思至少间隔 reflect_cooldown 秒,高流量下避免频繁 LLM 调用
+            cooldown = int(self.config.get("agent.reflect_cooldown", 300) or 300)
+            last_key = f"reflect_last_{event.user_id}"
+            last = float(self.db.get(last_key, 0) or 0)
+            if time.time() - last < cooldown:
+                return
+            self.db.set(last_key, time.time())
             recent = await self.sqlite_store.recent(event.session_id, limit=12)
             if not recent:
                 return
@@ -331,6 +339,11 @@ class AgentEngine:
             allowlist = [n for n in allowlist if n in persona_allow]
         elif allowlist is None:
             allowlist = persona_allow
+        # 全局工具允许列表(agent.tools_allowlist,空=全部):收窄部署暴露面
+        global_allow = self.config.get("agent.tools_allowlist", []) or []
+        if global_allow:
+            base = allowlist if allowlist is not None else self.tools.names()
+            allowlist = [n for n in base if n in global_allow]
         if allowlist is None:
             return self.tools.schemas()
         return [s for s in self.tools.schemas() if s["name"] in allowlist]
@@ -512,8 +525,13 @@ class AgentEngine:
                 return output
 
             # 并行执行多个工具调用(参考 Claude Code/Codex 的并行工具)
+            # 分批控制并发上限,避免一次 20 个工具同时发起子进程/HTTP 请求
+            max_parallel = int(self.config.get("agent.max_parallel_tools", 4) or 4)
             if len(tool_calls) > 1:
-                outputs = await asyncio.gather(*(_run_one(tc) for tc in tool_calls))
+                outputs: list[str] = []
+                for i in range(0, len(tool_calls), max_parallel):
+                    batch = tool_calls[i : i + max_parallel]
+                    outputs.extend(await asyncio.gather(*(_run_one(tc) for tc in batch)))
             else:
                 outputs = [await _run_one(tool_calls[0])]
 

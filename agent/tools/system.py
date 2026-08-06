@@ -6,6 +6,8 @@ import os
 import shlex
 from typing import Any
 
+from loguru import logger
+
 from ...security.auth import Decision
 from .base import Tool, ToolContext
 
@@ -62,9 +64,16 @@ class BashTool(Tool):
                 )
             except asyncio.TimeoutError:
                 proc.kill()
-                await proc.communicate()
+                try:
+                    await proc.communicate()
+                except Exception:  # noqa: BLE001
+                    pass
                 await self._audit(ctx, command, "allow", "", "timeout")
                 return {"error": "命令执行超时"}
+            except asyncio.CancelledError:
+                # 任务被取消时清理子进程,防止泄漏
+                proc.kill()
+                raise
             out = stdout.decode("utf-8", errors="ignore").strip()
             err = stderr.decode("utf-8", errors="ignore").strip()
             await self._audit(ctx, command, "allow", "", "ok" if proc.returncode == 0 else "error")
@@ -75,7 +84,9 @@ class BashTool(Tool):
             }
         except Exception as exc:  # noqa: BLE001
             await self._audit(ctx, command, "allow", str(exc), "error")
-            return {"error": f"执行失败: {exc}"}
+            # 不向模型泄漏异常细节(CLAUDE.md 规范 3),详情走日志
+            logger.warning("bash 命令执行失败: {}", exc)
+            return {"error": "命令执行失败"}
 
     async def _audit(self, ctx: ToolContext, command: str, decision: str, reason: str, status: str = "ok") -> None:
         audit = ctx.extra.get("audit_logger")

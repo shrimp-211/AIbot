@@ -205,6 +205,27 @@ def build_pipeline(
     )
 
 
+def _warn_security_posture(config: Config) -> None:
+    """启动时检查默认安全姿势,对高风险配置发出显著警告。
+
+    - trusted_folders 空且 sandbox 关闭:bash/文件工具可访问宿主任意路径
+    - super_admin_users 仍是示例占位符:任何知晓该号的用户拥有最高权限
+    """
+    trusted = list(config.get("security.trusted_folders", []) or [])
+    sandbox = bool(config.get("security.sandbox_enabled", False))
+    if not trusted and not sandbox:
+        logger.warning(
+            "⚠️ 安全提示: security.trusted_folders 为空且 sandbox_enabled=false,"
+            "bash/文件工具可访问宿主任意路径。对外部署前请配置可信目录或启用沙箱。"
+        )
+    admins = set(config.get("security.super_admin_users", []) or [])
+    if admins and "123456789" in admins:
+        logger.warning(
+            "⚠️ 安全提示: security.super_admin_users 仍为示例占位符 123456789,"
+            "请改为你自己的 QQ 号,否则任何知晓该号的用户都拥有最高权限。"
+        )
+
+
 async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO") -> None:
     config = load_config(config_path)
     setup_logger(level=log_level, log_dir=ROOT_DIR / "data" / "logs")
@@ -226,6 +247,9 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         sandbox_enabled=bool(config.get("security.sandbox_enabled", False)),
     )
     auth.load_dict(auth_db.get("auth", {}))
+
+    # 默认安全姿势检查:首次部署时提醒关键风险
+    _warn_security_posture(config)
 
     # 审计日志
     audit_logger = AuditLogger(

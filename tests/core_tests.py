@@ -721,6 +721,9 @@ async def test_engine_filtered_schemas():
                 {"name": "bash", "description": ""},
             ]
 
+        def names(self):
+            return [s["name"] for s in self.schemas()]
+
     class FakePersona:
         def get_tool_allowlist(self, sid):
             return ["web_search", "file_read"] if sid == "restricted" else None
@@ -731,7 +734,7 @@ async def test_engine_filtered_schemas():
         tools=FakeTools(),
         memory=object(),
         auth=object(),
-        config=object(),
+        config=Config({}),
         adapter=object(),
         db=object(),
         persona_manager=FakePersona(),
@@ -758,6 +761,11 @@ async def test_engine_filtered_schemas():
     sr._skills["web"] = Skill(name="web", description="", tools=["web_search", "bash"])
     sr.activate("restricted", "web")
     assert [s["name"] for s in engine._filtered_schemas("restricted")] == ["web_search"]
+    # 全局工具 allowlist(agent.tools_allowlist)收窄暴露面,与 persona/技能取交集
+    sr.deactivate("restricted")
+    engine.config.set("agent.tools_allowlist", ["web_search"])
+    assert [s["name"] for s in engine._filtered_schemas("open")] == ["web_search"]
+    engine.config.set("agent.tools_allowlist", None)
 
 
 async def test_tool_approval_flow():
@@ -1043,6 +1051,142 @@ async def test_provider_retry():
 
     _Timeout.__name__ = "ReadTimeout"
     assert BaseProvider._is_retryable(_Timeout())
+
+
+# ---------- 审查修复回归(第二轮) ----------
+
+
+async def test_cron_interval_persist():
+    """Cron interval 任务触发后推进 next_at 并持久化,重启不再立即重触发。"""
+    import os
+    import tempfile
+
+    from src.agent.proactive import CronManager
+    from src.storage.db import JsonKV
+    from src.utils.config import Config
+
+    class _FakeAdapter:
+        def __init__(self):
+            self.sent: list[tuple] = []
+
+        async def send_group_msg(self, gid, text):
+            self.sent.append(("group", gid, text))
+
+        async def send_private_msg(self, uid, text):
+            self.sent.append(("private", uid, text))
+
+    with tempfile.TemporaryDirectory() as d:
+        db = JsonKV(os.path.join(d, "cron.json"))
+        await db.initialize()
+        cron = CronManager(_FakeAdapter(), Config({"cron": {"agent_enabled": False}}), db=db)
+        res = await cron.add_task("s1", "每1分钟", "测试提醒", target_group="100")
+        assert res.get("ok"), res
+        tid = res["task_id"]
+
+        now = time.time()
+        task = cron._tasks[tid]
+        task["next_at"] = now - 1  # 模拟到期,应立即触发
+
+        await cron._check_task(tid, task, now)
+        assert cron._adapter.sent, cron._adapter.sent
+        assert task["next_at"] > now, "触发后应推进 next_at"
+        assert db.get("cron_tasks", {}).get(tid, {}).get("next_at", 0) > now, (
+            "推进后的 next_at 必须持久化,否则重启后立即重触发一次"
+        )
+
+        # 重启恢复:next_at 仍在未来,不会立即再触发
+        cron2 = CronManager(_FakeAdapter(), Config({"cron": {"agent_enabled": False}}), db=db)
+        await cron2.start()
+        await cron2.stop()
+        assert cron2._tasks[tid]["next_at"] > now
+
+
+async def test_jsonkv_flush_dirty_restore():
+    """JsonKV:写盘失败恢复脏标记,重试可成功(不丢失数据)。"""
+    import os
+    import tempfile
+
+    from src.storage.db import JsonKV
+
+    with tempfile.TemporaryDirectory() as d:
+        db = JsonKV(os.path.join(d, "kv.json"))
+        await db.initialize()
+        db.set("a", 1)
+        db.set("b", 2)
+
+        original_write = db._write
+
+        def fail_write(data):
+            raise OSError("磁盘满(模拟)")
+
+        db._write = fail_write
+        raised = False
+        try:
+            await db.flush()
+        except OSError:
+            raised = True
+        assert raised, "写盘失败应抛出"
+        assert db._dirty is True, "写失败后脏标记应恢复,避免数据静默丢失"
+
+        db._write = original_write
+        await db.flush()
+        assert db._dirty is False
+        db2 = JsonKV(os.path.join(d, "kv.json"))
+        await db2.initialize()
+        assert db2.get("a") == 1 and db2.get("b") == 2
+
+
+async def test_ssrf_edge_cases():
+    """SSRF:十进制/十六进制 IP、IPv4-mapped、云元数据、localtest.me 均被拦截。"""
+    from src.security.auth import is_safe_url, is_safe_url_async
+
+    # IP 字面量变体 → 内网
+    assert is_safe_url("http://2130706433/") is False  # 127.0.0.1 十进制整数
+    assert is_safe_url("http://0x7f000001/") is False  # 127.0.0.1 十六进制
+    assert is_safe_url("http://[::ffff:7f00:1]/") is False  # IPv4-mapped 127.0.0.1
+    assert is_safe_url("http://127.0.0.1/") is False
+    assert is_safe_url("http://[::1]/") is False
+    assert is_safe_url("http://10.0.0.1/") is False
+    assert is_safe_url("http://169.254.169.254/latest/meta-data/") is False  # 云元数据
+    # 公网放行
+    assert is_safe_url("https://example.com/") is True
+    assert is_safe_url("http://8.8.8.8/") is True
+    # 协议白名单
+    assert is_safe_url("file:///etc/passwd") is False
+    assert is_safe_url("ftp://example.com/") is False
+    # localtest.me 解析到 127.0.0.1:同步不解析保守放行,异步 fail-closed 拒绝
+    assert is_safe_url("http://localtest.me/") is True
+    assert await is_safe_url_async("http://localtest.me/") is False
+
+
+async def test_approval_stop_clears_pending():
+    """审批续接顺序修复:非审批回复(STOP)放弃挂起的审批,不残留到 TTL。"""
+    from src.agent.engine import AgentEngine
+    from src.security.auth import AuthManager
+    from src.utils.config import Config
+
+    class FakeMemory:
+        def clear_working(self, sid):
+            pass
+
+    auth = AuthManager()
+    auth.request_tool_approval("42", "bash", {"command": "ls"})
+    assert auth.get_pending_tool_approval("42") is not None
+
+    engine = AgentEngine(
+        provider=object(),
+        tools=object(),
+        memory=FakeMemory(),
+        auth=auth,
+        config=Config({}),
+        adapter=object(),
+        db=object(),
+        subagent_manager=object(),
+        skills=object(),
+    )
+    reply = await engine.process(make_event("停止", user_id="42"))
+    assert reply == "已结束当前对话上下文。"
+    assert auth.get_pending_tool_approval("42") is None, "STOP 应放弃挂起的审批"
 
 
 async def run_all() -> bool:

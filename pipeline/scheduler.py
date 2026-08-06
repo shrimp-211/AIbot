@@ -2,6 +2,10 @@
 
 参考 AstrBot 的 PipelineScheduler:async generator 的 yield 前为前置处理,
 yield 后为后置处理,递归调用后续阶段。
+
+中止约定:阶段通过设置 `event.is_stopped` 来跳过后续阶段(不抛异常)。
+阶段抛出的异常会向上传播,终止该事件整个管道(有意为之,由调用方捕获);
+因此阶段内部应自行 try/except 消化可预期的错误。
 """
 from __future__ import annotations
 

@@ -38,6 +38,7 @@ onebot_http:
   self_id: ""
 
 # 可选:QQ 官方开放平台 Webhook(需官方机器人凭据)
+# 注意:sign_secret 必须配置,否则 webhook 验签 fail-closed,所有事件上报都会被拒绝
 qq_official:
   enabled: false
   host: 127.0.0.1
@@ -142,16 +143,18 @@ pipeline:
 # ---------- 权限与安全 ----------
 security:
   admin_users: []               # 管理员 QQ 号
-  super_admin_users: ["123456789"]  # 超级管理员 QQ 号(改为你自己的)
-  trusted_folders: []           # bash 仅允许在这些目录执行(空=全部)
-  sandbox_enabled: false        # 命令经 Docker 沙箱执行(alpine)
+  super_admin_users: ["123456789"]  # 超级管理员 QQ 号(必须改为你自己的,启动时会警告)
+  trusted_folders: []           # bash/文件仅允许在这些目录(空=全部路径,风险高,见下方警告)
+  sandbox_enabled: false        # true = 命令经 Docker 沙箱执行(alpine)
   audit_enabled: true           # 审计日志 data/audit.jsonl
   pairing_enabled: false        # 私聊未配对用户需管理员审批(/approve)
   # 内置规则: 禁读 .env/secrets, 禁危险命令, curl/wget/sudo 需管理员
+  # ⚠️ trusted_folders 为空且 sandbox_enabled=false 时,启动会打印安全警告:
+  #    对外部署前请把 trusted_folders 设为 agent.workdir,或启用沙箱
 
 # ---------- WebUI 控制台 ----------
 webui:
   enabled: true
   host: 127.0.0.1
   port: 8080
-  password: admin123        # 管理密码(建议登录后修改为强密码)
+  password: ""              # 留空 = 首次启动随机生成(打印在日志中),或在此配置固定密码
