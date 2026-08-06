@@ -4,14 +4,22 @@ handler 类型:
 - command: 命令匹配(!/cmd 或直接 cmd)
 - message: 匹配所有消息
 - regex: 正则匹配
-- llm: 预留给 LLM 钩子(当前不做路由)
+- llm: 自然语言意图匹配(关键词命中)
+
+外部插件:data/plugins/ 下的 .py 文件通过 importlib 加载,
+支持 `setup(registry)` 入口函数,可热重载(reload 前自动卸载)。
 """
 from __future__ import annotations
 
+import asyncio
+import importlib.util
+import inspect
 import logging
 import re
+import sys
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from ..adapter.event import AgentEvent
@@ -97,6 +105,7 @@ class PluginRegistry:
         self._handlers: list[PluginHandler] = []
         self.sessions = SessionControl()
         self._deps: dict[type, Any] = dict(deps or {})
+        self._external_ids: list[str] = []  # 外部插件注册的 handler id,供卸载/重载
 
     def register_dependency(self, type_: type, value: Any) -> None:
         self._deps[type_] = value
@@ -222,3 +231,61 @@ class PluginRegistry:
 
     def handler_count(self) -> int:
         return len(self._handlers)
+
+    # ---------- 外部插件加载 ----------
+
+    async def load_from_directory(self, directory: str | Path) -> list[str]:
+        """从目录加载外部 .py 插件,返回成功加载的插件名列表。
+
+        插件文件可直接用 @registry.command() 等装饰器注册 handler,
+        也可定义 `setup(registry)` / `register(registry)` 入口函数
+        (支持 async,可接收依赖注入参数)。
+        """
+        directory = Path(directory)
+        if not directory.is_dir():
+            return []
+        loaded: list[str] = []
+        for path in sorted(directory.glob("*.py")):
+            if path.name.startswith("_"):
+                continue
+            try:
+                await self._load_plugin(path)
+                loaded.append(path.stem)
+            except Exception:  # noqa: BLE001
+                _logger.exception("外部插件加载失败: %s", path.name)
+        return loaded
+
+    async def _load_plugin(self, path: Path) -> None:
+        module_name = f"qqbot_external_{path.stem}"
+        sys.modules.pop(module_name, None)  # 清理缓存以支持热重载
+        before = {h.id for h in self._handlers}
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"无法解析插件模块: {path.name}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        setup = getattr(module, "setup", None) or getattr(module, "register", None)
+        if callable(setup):
+            result = setup(self)
+            if inspect.isawaitable(result):
+                await result
+        new_ids = [h.id for h in self._handlers if h.id not in before]
+        self._external_ids.extend(new_ids)
+        _logger.info("外部插件已加载: %s (%d 个 handler)", path.stem, len(new_ids))
+
+    def unload_external(self) -> None:
+        """卸载所有外部插件注册的 handler 并清理模块缓存。"""
+        ids = set(self._external_ids)
+        if ids:
+            self._handlers = [h for h in self._handlers if h.id not in ids]
+            self._handlers.sort(key=lambda h: h.priority)
+            self._external_ids.clear()
+        for mod in list(sys.modules):
+            if mod.startswith("qqbot_external_"):
+                sys.modules.pop(mod, None)
+
+    async def reload_from_directory(self, directory: str | Path) -> list[str]:
+        """先卸载全部外部插件,再重新加载。返回加载的插件名。"""
+        self.unload_external()
+        return await self.load_from_directory(directory)

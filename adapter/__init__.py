@@ -5,6 +5,7 @@
 - OneBotV11Client:正向 WebSocket(客户端,自动重连)
 - OneBotV11Http:HTTP 上报 + HTTP API
 - QQOfficialAdapter:QQ 官方开放平台 Webhook
+- TelegramAdapter:Telegram Bot API 长轮询
 """
 from .base import AdapterRegistry, BaseAdapter
 from .event import AgentEvent
@@ -14,6 +15,7 @@ from .onebot_forward import OneBotV11Client
 from .onebot_http import OneBotV11Http
 from .onebot_v11 import OneBotV11Adapter
 from .qq_official import QQOfficialAdapter
+from .telegram import TelegramAdapter
 
 __all__ = [
     "AdapterRegistry",
@@ -27,4 +29,5 @@ __all__ = [
     "OneBotV11Client",
     "OneBotV11Http",
     "QQOfficialAdapter",
+    "TelegramAdapter",
 ]

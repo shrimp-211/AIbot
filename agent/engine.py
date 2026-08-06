@@ -259,6 +259,7 @@ class AgentEngine:
             persona,
             static,
             f"\n当前时间: {now}",
+            f"当前会话平台: {event.platform} | 消息类型: {'群聊' if event.message_type == 'group' else '私聊'}",
             f"当前用户角色等级: {role} (7=超级管理员,4=管理员,1=普通用户)",
             f"用户画像: {json.dumps(profile, ensure_ascii=False) if profile else '暂无'}",
         ]

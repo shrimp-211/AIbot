@@ -39,6 +39,13 @@ qq_official:
   app_secret: ""
   sign_secret: ""
 
+# 可选:Telegram 适配器(Bot API 长轮询,需 @BotFather 创建 Bot 获取 token)
+telegram:
+  enabled: false
+  token: ""                # Bot Token
+  allowed_chat_ids: []     # 允许的群/用户 ID(空=全部)
+  poll_timeout: 30         # 长轮询超时秒数(最大 50)
+
 # ---------- LLM Provider ----------
 llm:
   provider:

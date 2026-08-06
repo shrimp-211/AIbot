@@ -20,6 +20,7 @@ from .adapter import (
     OneBotV11Client,
     OneBotV11Http,
     QQOfficialAdapter,
+    TelegramAdapter,
 )
 from .agent.engine import AgentEngine
 from .agent.hooks import HookManager
@@ -56,6 +57,11 @@ ROOT_DIR = BASE_DIR.parent
 DEFAULT_CONFIG = BASE_DIR / "config.yaml"
 
 
+def _plugin_dirs() -> list[Path]:
+    """外部插件扫描目录:内置示例(src/data/plugins,随 git) + 用户本地(根 data/plugins)。"""
+    return [BASE_DIR / "data" / "plugins", ROOT_DIR / "data" / "plugins"]
+
+
 def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: AuthManager) -> None:
     """注册内置演示插件(可被 data/plugins 的外部插件补充)。"""
 
@@ -89,6 +95,27 @@ def register_builtin_plugins(registry: PluginRegistry, config: Config, auth: Aut
             return None
         result = auth.approve_pairing(code, event.user_id)
         await event.reply(f"配对结果: {result}")
+        return None
+
+    @registry.command("plugins", permission_level=1)
+    async def list_plugins(event: AgentEvent):
+        names: set[str] = set()
+        for d in _plugin_dirs():
+            if d.is_dir():
+                names.update(p.stem for p in d.glob("*.py") if not p.name.startswith("_"))
+        lines = [f"📦 外部插件: {len(names)} 个"]
+        lines.extend(f"· {n}" for n in sorted(names))
+        lines.append(f"内置 handler: {registry.handler_count()} 个")
+        await event.reply("\n".join(lines))
+        return None
+
+    @registry.command("plugin reload", permission_level=7)
+    async def reload_plugins(event: AgentEvent):
+        registry.unload_external()
+        loaded: list[str] = []
+        for d in _plugin_dirs():
+            loaded.extend(await registry.load_from_directory(d))
+        await event.reply(f"插件重载完成: {loaded or '无外部插件'}")
         return None
 
 
@@ -187,6 +214,10 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     plugin_registry.register_dependency(MemoryStore, memory)
     register_builtin_plugins(plugin_registry, config, auth)
 
+    # 外部插件(热加载 */data/plugins/*.py,支持 setup(registry) 入口)
+    for plugin_dir in _plugin_dirs():
+        await plugin_registry.load_from_directory(plugin_dir)
+
     # 管道
     pipeline = build_pipeline(config, auth, plugin_registry, engine)
 
@@ -236,6 +267,16 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
                 app_id=config.get("qq_official.app_id", ""),
                 app_secret=config.get("qq_official.app_secret", ""),
                 sign_secret=config.get("qq_official.sign_secret", ""),
+            ),
+        )
+
+    if config.get("telegram.enabled", False):
+        adapter_registry.register(
+            "telegram",
+            TelegramAdapter(
+                token=config.get("telegram.token", ""),
+                allowed_chat_ids=list(config.get("telegram.allowed_chat_ids", []) or []),
+                poll_timeout=float(config.get("telegram.poll_timeout", 30) or 30),
             ),
         )
 
