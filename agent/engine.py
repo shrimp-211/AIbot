@@ -113,6 +113,7 @@ class AgentEngine:
         sandbox_pool: Any = None,
         interrupt: Any = None,
         followup: Any = None,
+        qq_persona: Any = None,
     ):
         self.provider = provider
         self.tools = tools
@@ -137,6 +138,7 @@ class AgentEngine:
         self.sandbox_pool = sandbox_pool
         self.interrupt = interrupt
         self.followup = followup
+        self.qq_persona = qq_persona
         self._static_prompt: str | None = None
         self.messages_processed = 0  # 累计处理消息数(WebUI 统计)
 
@@ -263,6 +265,8 @@ class AgentEngine:
             logger.exception("Agent 处理消息异常")
             reply = "抱歉,处理你的消息时出了点问题,请稍后再试。"
 
+        if self.hooks:
+            await self.hooks.trigger("post_agent", reply=reply or "", event=event)
         if reply:
             self.memory.add_message(event.session_id, "assistant", reply)
             await self._record_to_sqlite(event, "assistant", reply)
@@ -499,6 +503,10 @@ class AgentEngine:
             persona,
             static,
             self._reply_guidance_prompt(event),
+        ]
+        if self.qq_persona is not None:
+            parts.append(self.qq_persona.build_prompt(event.message_type))
+        parts += [
             f"\n当前时间: {now}",
             f"当前会话平台: {event.platform} | 消息类型: {'群聊' if event.message_type == 'group' else '私聊'}",
             f"当前用户角色等级: {role} (7=超级管理员,4=管理员,1=普通用户)",
@@ -631,7 +639,11 @@ class AgentEngine:
                     messages = truncate_by_halving(messages)
                 if self.hooks:
                     await self.hooks.trigger("post_compaction", messages=len(messages))
+            if self.hooks:
+                await self.hooks.trigger("pre_llm_request", messages=len(messages), tools=len(schemas))
             result = await self.provider.chat(messages, system_prompt=system_prompt, tools=schemas)
+            if self.hooks:
+                await self.hooks.trigger("post_llm_response", content=result.get("content", "")[:200])
             # 记录 token 用量与估算成本(usage 缺失如 mock 时自动跳过)
             self.usage.record(
                 result.get("usage"),

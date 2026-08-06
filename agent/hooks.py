@@ -23,6 +23,11 @@ HOOK_EVENTS = (
     "post_compact",
     "permission_denied",
     "config_change",
+    # 插件生命周期扩展(I4)
+    "post_agent",
+    "after_message_sent",
+    "pre_llm_request",
+    "post_llm_response",
 )
 
 

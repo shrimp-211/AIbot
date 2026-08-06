@@ -107,7 +107,9 @@ class PluginRegistry:
         self.sessions = SessionControl()
         self._deps: dict[type, Any] = dict(deps or {})
         self._external_ids: list[str] = []  # 外部插件注册的 handler id,供卸载/重载
-        self._plugin_meta: dict[str, dict] = {}  # 插件文件名(stem) -> plugin.json 元数据
+        self._plugin_meta: dict[str, dict] = {}  # 插件文件名(stem) -> 插件元数据
+        self._llm_tools: dict[str, Any] = {}  # name -> PluginTool(@llm_tool 生成)
+        self._lifecycle: list[Any] = []  # PluginLifecycle 实例(插件内创建)
 
     def register_dependency(self, type_: type, value: Any) -> None:
         self._deps[type_] = value
@@ -275,21 +277,39 @@ class PluginRegistry:
                 await result
         new_ids = [h.id for h in self._handlers if h.id not in before]
         self._external_ids.extend(new_ids)
-        # 读取同目录同名 plugin.json 作为插件元数据
+        # 收集 @llm_tool 生成的结构化工具(模块级 __llm_tools__)
+        for tool in getattr(module, "__llm_tools__", []) or []:
+            self._llm_tools[tool.name] = tool
+        # 收集插件内创建的生命周期注册器(模块级 __lifecycle__ 或直接提供 install())
+        for lc in getattr(module, "__lifecycle__", []) or []:
+            self._lifecycle.append(lc)
+        # 元数据:优先 metadata.yaml(目录规范),回退同名 plugin.json
+        self._plugin_meta[path.stem] = self._read_meta(path)
+        _logger.info("外部插件已加载: %s (%d 个 handler, %d 个 llm_tool)", path.stem, len(new_ids), len(getattr(module, "__llm_tools__", []) or []))
+
+    @staticmethod
+    def _read_meta(path: Path) -> dict:
+        """读取插件元数据:同目录 metadata.yaml > plugin.json > 默认。"""
+        # 目录规范的 metadata.yaml 在父目录;旧式 plugin.json 与 .py 同名
+        yaml_candidates = [path.with_suffix(".yaml"), path.parent / "metadata.yaml"]
+        for yp in yaml_candidates:
+            if yp.is_file():
+                try:
+                    import yaml as _yaml
+
+                    data = _yaml.safe_load(yp.read_text(encoding="utf-8"))
+                    return data if isinstance(data, dict) else {"name": path.stem}
+                except Exception:  # noqa: BLE001
+                    _logger.warning("插件元数据解析失败: %s", yp.name)
         meta_path = path.with_suffix(".json")
         if meta_path.is_file():
             try:
                 with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                if isinstance(meta, dict):
-                    self._plugin_meta[path.stem] = meta
-                else:
-                    self._plugin_meta[path.stem] = {"name": path.stem}
+                    data = json.load(f)
+                return data if isinstance(data, dict) else {"name": path.stem}
             except (json.JSONDecodeError, OSError):
                 _logger.warning("插件元数据解析失败: %s", meta_path.name)
-        else:
-            self._plugin_meta[path.stem] = {"name": path.stem}
-        _logger.info("外部插件已加载: %s (%d 个 handler)", path.stem, len(new_ids))
+        return {"name": path.stem}
 
     def unload_external(self) -> None:
         """卸载所有外部插件注册的 handler 并清理模块缓存。"""
@@ -302,10 +322,20 @@ class PluginRegistry:
             if mod.startswith("qqbot_external_"):
                 sys.modules.pop(mod, None)
         self._plugin_meta.clear()
+        self._llm_tools.clear()
+        self._lifecycle.clear()
 
     def plugin_metadata(self) -> dict[str, dict]:
         """返回已加载外部插件的元数据(键为插件文件名 stem)。"""
         return dict(self._plugin_meta)
+
+    def llm_tools(self) -> list[Any]:
+        """返回插件注册的 @llm_tool 工具列表(供 main.py 同步进引擎)。"""
+        return list(self._llm_tools.values())
+
+    def lifecycle(self) -> list[Any]:
+        """返回插件创建的生命周期注册器列表。"""
+        return list(self._lifecycle)
 
     async def reload_from_directory(self, directory: str | Path) -> list[str]:
         """先卸载全部外部插件,再重新加载。返回加载的插件名。"""

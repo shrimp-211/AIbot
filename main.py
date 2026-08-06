@@ -11,7 +11,7 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -25,12 +25,13 @@ from .agent.memory.sqlite_store import SQLiteStore
 from .agent.memory.store import MemoryStore
 from .agent.perception import PerceptionManager
 from .agent.persona import PersonaManager
+from .agent.qq_persona import QqPersona
 from .agent.proactive import CronManager
 from .agent.skills import SkillRegistry
 from .agent.usage import UsageTracker
 from .agent.tools import build_default_registry
 from .agent.tools.mcp_tools import MCPTool
-from .pipeline.scheduler import PipelineScheduler
+from .pipeline.scheduler import PipelineScheduler, Stage
 from .pipeline.stages import (
     ContentSafetyStage,
     DecorateStage,
@@ -333,28 +334,36 @@ def build_pipeline(
     engine: AgentEngine,
     db: JsonKV | None = None,
     adapter_getter: Callable[[], BaseAdapter | None] | None = None,
+    qq_persona: Any = None,
+    hooks: Any = None,
 ) -> PipelineScheduler:
     """构建洋葱模型管道。
 
-    顺序:Notice(通知) → RateLimit → ContentSafety → Security(访问控制)
+    顺序:Notice(通知) → RateLimit → ContentSafety → QQ复读 → Security(访问控制)
     → Plugin(NoneBot 风格插件分发) → WakeCheck(唤醒) → PreProcess →
     Process(Agent) → Decorate → Respond。
+    复读阶段在所有消息上登记样本,仅唤醒时参与复读并短路;
     插件阶段在唤醒检测之前,因此 message/regex/command handler 能看到全部消息。
     """
-    return PipelineScheduler(
-        [
-            NoticeStage(config, db=db, adapter_getter=adapter_getter),
-            RateLimitStage(config),
-            ContentSafetyStage(config),
-            SecurityStage(config, auth),
-            PluginStage(plugin_registry, config),
-            WakeCheckStage(config),
-            PreProcessStage(),
-            ProcessStage(engine),
-            DecorateStage(),
-            RespondStage(),
-        ]
-    )
+    stages: list[Stage] = [
+        NoticeStage(config, db=db, adapter_getter=adapter_getter),
+        RateLimitStage(config),
+        ContentSafetyStage(config),
+    ]
+    if qq_persona is not None:
+        from .pipeline.stages.qq_repeat import QqRepeatStage
+
+        stages.append(QqRepeatStage(qq_persona, threshold=int(config.get("agent.qq_repeat_threshold", 3) or 3)))
+    stages += [
+        SecurityStage(config, auth),
+        PluginStage(plugin_registry, config),
+        WakeCheckStage(config),
+        PreProcessStage(),
+        ProcessStage(engine),
+        DecorateStage(),
+        RespondStage(hooks=hooks),
+    ]
+    return PipelineScheduler(stages)
 
 
 def _warn_security_posture(config: Config) -> None:
@@ -520,6 +529,11 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     interrupt = InterruptController()
     followup = FollowUpQueue()
 
+    # QQ 群文化人格适配器(I4):群友风 prompt + 复读检测
+    qq_persona = QqPersona(
+        repeat_threshold=int(config.get("agent.qq_repeat_threshold", 3) or 3)
+    )
+
     # 记忆 / 人格 / 钩子 / 定时任务 / 技能
     memory = MemoryStore(db)
     sqlite_store = SQLiteStore(ROOT_DIR / "data" / "memory.sqlite3")
@@ -556,6 +570,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         sandbox_pool=sandbox_pool,
         interrupt=interrupt,
         followup=followup,
+        qq_persona=qq_persona,
     )
 
     # 插件注册中心
@@ -569,6 +584,15 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     # 外部插件(热加载 */data/plugins/*.py,支持 setup(registry) 入口)
     for plugin_dir in _plugin_dirs():
         await plugin_registry.load_from_directory(plugin_dir)
+
+    # I4 插件生态:同步 @llm_tool 工具进引擎 + 安装生命周期钩子
+    for ptool in plugin_registry.llm_tools():
+        tools.register(ptool)
+    for lifecycle in plugin_registry.lifecycle():
+        try:
+            lifecycle.install()
+        except Exception:  # noqa: BLE001
+            logger.exception("插件生命周期钩子安装失败")
 
     # 适配器注册中心(NoticeStage 经 adapter_getter 惰性获取主适配器)
     adapter_registry = AdapterRegistry()
@@ -587,6 +611,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         config, auth, plugin_registry, engine,
         db=db,
         adapter_getter=lambda: adapter_registry.get("qq"),
+        qq_persona=qq_persona,
+        hooks=hooks,
     )
     adapter_registry.set_callback(pipeline.execute)
 
@@ -636,6 +662,27 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         )
         await webui.start()
 
+    # I4 插件热重载(可选):检测插件目录文件变更自动重载
+    hot_reloader = None
+    if config.get("plugins.hot_reload", True):
+        from .plugins.hot_reload import HotReloader
+
+        hot_reloader = HotReloader(_plugin_dirs())
+
+        async def _hot_reload(changed: list) -> None:
+            for plugin_dir in _plugin_dirs():
+                await plugin_registry.reload_from_directory(plugin_dir)
+            for ptool in plugin_registry.llm_tools():
+                tools.register(ptool)
+            for lifecycle in plugin_registry.lifecycle():
+                try:
+                    lifecycle.install()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        hot_reloader.set_reload_cb(_hot_reload)
+        hot_reloader.start()
+
     logger.info(
         f"✅ QQ AI Agent 已启动 | 工具: {len(tools.names())} | "
         f"管道阶段: {len(pipeline.stages)} | 插件 handler: {plugin_registry.handler_count()}"
@@ -660,6 +707,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     await cron.stop()
     await sqlite_store.close()
     await mcp_manager.stop_all()
+    if hot_reloader is not None:
+        await hot_reloader.stop()
     if webui is not None:
         await webui.stop()
     await db.stop()

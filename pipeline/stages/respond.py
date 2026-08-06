@@ -9,8 +9,9 @@ from ..scheduler import Stage
 
 
 class RespondStage(Stage):
-    def __init__(self, interval: float = 0.3):
+    def __init__(self, interval: float = 0.3, hooks=None):
         self._interval = interval
+        self._hooks = hooks
 
     async def process(self, event: AgentEvent) -> None:
         segments = event.state.get("reply_segments") or []
@@ -22,5 +23,10 @@ class RespondStage(Stage):
         # (插件/工具直连 event.reply 的路径由调用方自行转义,这里不动)
         for i, seg in enumerate(segments):
             await event.reply(escape_cq(seg), at=(i == 0 and event.is_tome))
+            if self._hooks is not None:
+                try:
+                    await self._hooks.trigger("after_message_sent", text=seg, event=event)
+                except Exception:  # noqa: BLE001
+                    pass
             if i < len(segments) - 1 and self._interval:
                 await asyncio.sleep(self._interval)
