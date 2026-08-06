@@ -23,6 +23,8 @@ from .adapter import (
 )
 from .agent.engine import AgentEngine
 from .agent.hooks import HookManager
+from .agent.memory.files import FileMemoryStore
+from .agent.memory.sqlite_store import SQLiteStore
 from .agent.memory.store import MemoryStore
 from .agent.persona import PersonaManager
 from .agent.proactive import CronManager
@@ -119,6 +121,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
 
     # 记忆 / 人格 / 钩子 / 定时任务 / 技能
     memory = MemoryStore(db)
+    sqlite_store = SQLiteStore(ROOT_DIR / "data" / "memory.sqlite3")
+    file_memory = FileMemoryStore(ROOT_DIR / "data" / "memory")
     persona = PersonaManager(db)
     hooks = HookManager()
     cron = CronManager(adapter=None, config=config, db=db)
@@ -139,6 +143,8 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
         hooks=hooks,
         cron_manager=cron,
         skills=skills,
+        sqlite_store=sqlite_store,
+        file_memory=file_memory,
     )
 
     # 插件注册中心
@@ -238,6 +244,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     # 关闭
     await adapter_registry.stop_all()
     await cron.stop()
+    await sqlite_store.close()
     if webui is not None:
         await webui.stop()
     await db.stop()

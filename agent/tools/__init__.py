@@ -5,6 +5,7 @@ from ...security.auth import AuthManager
 from .base import ToolRegistry
 from .file_tools import FileReadTool, FileWriteTool, GlobTool, GrepTool
 from .knowledge import KnowledgeAddTool, KnowledgeSearchTool
+from .memory_tools import MemoryAddTool, MemoryListTool, MemorySearchTool
 from .network import WebFetchTool, WebSearchTool
 from .qq_admin import (
     QqEssenceTool,
@@ -54,6 +55,9 @@ def build_default_registry(auth: AuthManager) -> ToolRegistry:
         SkillListTool(),
         SkillUseTool(),
         SkillStopTool(),
+        MemorySearchTool(),
+        MemoryAddTool(),
+        MemoryListTool(),
     ):
         registry.register(tool)
     return registry

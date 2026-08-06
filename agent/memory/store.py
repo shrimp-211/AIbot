@@ -72,6 +72,48 @@ class MemoryStore:
     def all_profiles(self) -> dict[str, Any]:
         return self._db.get("user_profiles", {})
 
+    # ---------- 用户建模(Hermes Honcho dialectic) ----------
+
+    def update_user_summary(self, user_id: str, key: str, value: Any) -> None:
+        """更新用户概要字段(偏好/习惯/知识水平等)。"""
+        profile = self.get_profile(user_id)
+        summary = dict(profile.get("_summary", {}))
+        summary[key] = value
+        summary["_updated_at"] = int(time.time())
+        profile["_summary"] = summary
+        self._save_profile(user_id, profile)
+
+    def get_user_summary(self, user_id: str) -> dict[str, Any]:
+        return dict(self.get_profile(user_id).get("_summary", {}))
+
+    def detect_profile_conflict(self, user_id: str, key: str, value: Any) -> list[str]:
+        """冲突检测:返回与已有画像矛盾的描述列表(空 = 无冲突)。
+
+        同一 key 的已有值与新值不一致时返回冲突提示,供上层决定是否覆盖。
+        """
+        old = self.get_profile(user_id).get(key)
+        if old is None or old == value:
+            return []
+        return [f"{key}: 已有记录 '{old}' 与新信息 '{value}' 冲突"]
+
+    def _save_profile(self, user_id: str, profile: dict[str, Any]) -> None:
+        profiles = self._db.get("user_profiles", {})
+        profiles[user_id] = profile
+        self._db.set("user_profiles", profiles)
+
+    def record_reflection(self, user_id: str, reflection: str) -> None:
+        """记录一次自我反思结果(周期性,见 pipeline/stages/process.py)。"""
+        store = self._db.get("reflections", {})
+        items = store.setdefault(user_id, [])
+        items.append({"content": reflection, "ts": int(time.time())})
+        store[user_id] = items[-50:]
+        self._db.set("reflections", store)
+
+    def get_reflections(self, user_id: str, limit: int = 5) -> list[str]:
+        store = self._db.get("reflections", {})
+        items = store.get(user_id, [])
+        return [i.get("content", "") for i in items[-limit:]]
+
     # ---------- 自动记忆(LLM 提取的关键信息) ----------
 
     def save_auto_memory(self, user_id: str, memory_type: str, content: str) -> None:

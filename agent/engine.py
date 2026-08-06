@@ -44,6 +44,8 @@ class AgentEngine:
         cron_manager: Any = None,
         skills: Any = None,
         subagent_manager: Any = None,
+        sqlite_store: Any = None,
+        file_memory: Any = None,
     ):
         self.provider = provider
         self.tools = tools
@@ -57,6 +59,8 @@ class AgentEngine:
         self.cron_manager = cron_manager
         self.skills = skills
         self.subagent_manager = subagent_manager
+        self.sqlite_store = sqlite_store
+        self.file_memory = file_memory
         self._static_prompt: str | None = None
 
     # ---------- 入口 ----------
@@ -81,6 +85,8 @@ class AgentEngine:
                 self.skills.activate(event.session_id, matched.name)
 
         self.memory.add_message(event.session_id, "user", text)
+        await self._record_to_sqlite(event, "user", text)
+        await self._load_memory_context(event, text)
         ctx = self._build_tool_context(event)
         messages = self._build_messages(event, text)
         system_prompt = self._build_system_prompt(event)
@@ -98,7 +104,73 @@ class AgentEngine:
 
         if reply:
             self.memory.add_message(event.session_id, "assistant", reply)
+            await self._record_to_sqlite(event, "assistant", reply)
+            await self._maybe_reflect(event)
         return reply
+
+    async def _maybe_reflect(self, event: AgentEvent) -> None:
+        """周期性自我反思:每 8 条用户消息,让 LLM 提炼该用户值得长期记住的信息。"""
+        if self.sqlite_store is None:
+            return
+        try:
+            key = f"reflect_count_{event.user_id}"
+            n = int(self.db.get(key, 0) or 0) + 1
+            self.db.set(key, n)
+            if n % 8 != 0:
+                return
+            recent = await self.sqlite_store.recent(event.session_id, limit=12)
+            if not recent:
+                return
+            conv = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in recent)
+            prompt = (
+                "根据以下对话,提取该用户 3-5 条值得长期记住的关键信息"
+                "(偏好/习惯/事实/身份/目标),用简短要点列出,不要客套:\n" + conv
+            )
+            result = await self.provider.chat(
+                [{"role": "user", "content": prompt}],
+                system_prompt="你是记忆整理助手,只输出要点。",
+            )
+            summary = (result.get("content") or "").strip()
+            if summary:
+                self.memory.record_reflection(event.user_id, summary)
+                logger.info("已完成一次用户自我反思(%s)", event.user_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("自我反思失败")
+
+    async def _record_to_sqlite(self, event: AgentEvent, role: str, content: str) -> None:
+        """把消息写入 SQLite+FTS5 存储,支持跨会话搜索。"""
+        if self.sqlite_store is None or not content:
+            return
+        try:
+            await self.sqlite_store.add_message(
+                session_id=event.session_id,
+                role=role,
+                content=content,
+                user_id=event.user_id,
+                group_id=event.group_id,
+                platform=event.platform,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("SQLite 记忆写入失败")
+
+    async def _load_memory_context(self, event: AgentEvent, text: str) -> None:
+        """预取相关记忆到 event.state,供消息/Prompt 构建读取。"""
+        if self.sqlite_store is not None:
+            try:
+                hits = await self.sqlite_store.search(text, limit=5, user_id=event.user_id)
+                if hits:
+                    event.state["memory_hits"] = hits
+            except Exception:  # noqa: BLE001
+                logger.exception("SQLite 记忆检索失败")
+        if self.file_memory is not None:
+            try:
+                ctx_text = await self.file_memory.build_context(max_chars=6000)
+                if ctx_text:
+                    event.state["file_memory_context"] = ctx_text
+            except Exception:  # noqa: BLE001
+                logger.exception("文件记忆上下文加载失败")
 
     # ---------- NLU 快速路径 ----------
 
@@ -182,6 +254,12 @@ class AgentEngine:
         auto = self.memory.get_auto_memory(event.user_id)
         if auto:
             parts.append("历史记忆: " + "；".join(auto))
+        reflections = self.memory.get_reflections(event.user_id, limit=3)
+        if reflections:
+            parts.append("用户认知总结: " + "；".join(reflections))
+        fm_ctx = event.state.get("file_memory_context")
+        if fm_ctx:
+            parts.append(f"\n长期记忆文件(可参考):\n{fm_ctx}")
         skill_prompt = self._skills_prompt(event.session_id)
         if skill_prompt:
             parts.append(skill_prompt)
@@ -210,6 +288,16 @@ class AgentEngine:
     def _build_messages(self, event: AgentEvent, text: str) -> list[dict]:
         session_id = event.session_id
         messages: list[dict] = []
+        # FTS5 检索的相关历史(跨会话)
+        hits = event.state.get("memory_hits")
+        if hits:
+            lines = [f"- {h['role']}: {h['content'][:200]}" for h in hits]
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "根据历史对话检索到的相关片段,可辅助回答:\n" + "\n".join(lines),
+                }
+            )
         # 短期记忆(跨会话,作为历史)
         for m in self.memory.get_episodic(session_id, limit=8):
             messages.append({"role": m["role"], "content": m["content"]})
@@ -322,5 +410,9 @@ class AgentEngine:
             cron_manager=self.cron_manager,
             skills=self.skills,
             subagent_manager=self.subagent_manager,
-            extra={"loop": asyncio.get_running_loop()},
+            extra={
+                "loop": asyncio.get_running_loop(),
+                "sqlite_store": self.sqlite_store,
+                "file_memory": self.file_memory,
+            },
         )
