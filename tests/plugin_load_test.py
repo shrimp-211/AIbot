@@ -18,9 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.adapter.base import AdapterRegistry
 from src.plugins.registry import PluginRegistry
+from src.utils.config import Config
 
 PLUGIN_DIR = ROOT / "src" / "data" / "plugins"
+ADAPTER_DIR = ROOT / "src" / "data" / "adapters"
 REQUIRED_FIELDS = ("name", "version", "author", "description", "commands", "dependencies")
 REQUIRED_TYPES = ("json", "py")
 
@@ -69,11 +72,37 @@ async def check() -> None:
     print(f"元数据: {len(json_files)} 个 JSON")
 
 
+def check_adapters() -> None:
+    """验证 data/adapters 下所有适配器插件能被 load_adapters 正确加载。"""
+    from src.main import load_adapters
+
+    py_files = sorted(ADAPTER_DIR.glob("*.py"))
+    if not py_files:
+        return
+    # 未启用配置:仅默认主通道 onebot_v11 无条件注册,其余适配器不加载
+    ar = AdapterRegistry()
+    loaded = load_adapters(ar, Config({}), None)
+    assert set(ar.names()) == {"qq"}, f"未启用配置下仅应加载默认 OneBot: {ar.names()}"
+    assert len(loaded) == 1 and loaded[0][0] == "onebot_v11", loaded
+    # 启用正向 WS:onebot_forward 应注册为 qq_forward,默认主通道同时保留
+    ar2 = AdapterRegistry()
+    cfg = Config({"onebot_forward": {"enabled": True, "url": "ws://127.0.0.1:6700"}})
+    load_adapters(ar2, cfg, None)
+    names = ar2.names()
+    assert "qq_forward" in names, f"onebot_forward 未注册: {names}"
+    assert "qq" in names, f"默认主通道应保留: {names}"
+    print(f"适配器: {len(py_files)} 个插件加载测试通过")
+
+
 async def main() -> None:
     if not PLUGIN_DIR.is_dir():
         print(f"SKIP: 目录不存在 {PLUGIN_DIR}")
         return
     await check()
+    try:
+        check_adapters()
+    except Exception as exc:  # noqa: BLE001
+        failures.append(f"适配器加载测试失败: {exc}")
     if failures:
         print("\n".join(f"FAIL: {f}" for f in failures))
         sys.exit(1)
