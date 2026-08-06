@@ -348,12 +348,41 @@ class AgentEngine:
             )
         return None
 
+    _HELP_GROUPS: list[tuple[str, tuple[str, ...]]] = [
+        ("🔍 搜索与网络", ("web_search", "web_fetch")),
+        ("📁 文件与命令", ("file_read", "file_write", "file_edit", "glob", "grep", "bash")),
+        ("🧠 知识库与记忆", ("knowledge_add", "knowledge_search", "knowledge_list", "memory_")),
+        ("🖼️ 图片/媒体理解", ("vision_analyze", "ocr_extract", "audio_transcribe", "video_summarize", "document_parse", "media_analyze")),
+        ("🎨 内容生成", ("image_generate", "video_generate", "tts_speak", "mixed_media")),
+        ("💬 QQ 消息", ("qq_send_image", "qq_send_voice", "qq_send_like", "qq_recall")),
+        ("🎉 QQ 互动", ("qq_send_poke", "qq_send_emoji", "qq_send_dice", "qq_send_music", "qq_ocr")),
+        ("🛡️ QQ 群管理", ("qq_kick", "qq_mute", "qq_set_admin", "qq_essence", "qq_group_announce", "qq_group_file_list", "qq_group_info", "qq_group_list")),
+        ("📋 规划与会话", ("plan", "task_", "session_", "subagent")),
+        ("⏰ 其他", ("cron", "translate", "mcp_server_list", "skill_", "ask_user")),
+    ]
+
     def _help_text(self) -> str:
-        lines = ["🤖 我可以帮你做很多事情,直接说需求即可:", ""]
-        for s in self.tools.schemas():
-            lines.append(f"· `{s['name']}` — {s.get('description', '')}")
-        lines.append("")
-        lines.append("输入 `STOP` 结束对话,`STATUS` 查看状态。")
+        schemas = {s["name"]: s for s in self.tools.schemas()}
+        lines = ["🤖 我是 QQ AI Agent,直接说需求即可。可用能力如下:", ""]
+        used: set[str] = set()
+        for title, prefixes in self._HELP_GROUPS:
+            members = [
+                s for name, s in schemas.items()
+                if any(name == p or name.startswith(p) for p in prefixes) and name not in used
+            ]
+            if not members:
+                continue
+            lines.append(f"{title}")
+            for s in members:
+                lines.append(f"  · {s['name']} — {s.get('description', '')}")
+            used.update(m["name"] for m in members)
+            lines.append("")
+        leftovers = [s["name"] for name, s in schemas.items() if name not in used]
+        if leftovers:
+            lines.append("🔧 其他")
+            lines.extend(f"  · {n}" for n in sorted(leftovers))
+            lines.append("")
+        lines.append("输入 `STOP` 结束对话,`STATUS` 查看状态,`/help` 查看本帮助。")
         return "\n".join(lines)
 
     def _status_text(self) -> str:
@@ -431,6 +460,23 @@ class AgentEngine:
             self._static_prompt = "\n".join(lines)
         return self._static_prompt
 
+    def _reply_guidance_prompt(self, event: AgentEvent) -> str:
+        """QQ 环境人类友好回复引导(参照 AstrBot 行为约束):自然口吻 + 富媒体主动发送。"""
+        guidance = [
+            "## 回复风格(QQ 环境)",
+            "- 像群友一样自然聊天,回复简洁友好,避免教科书式长文与生硬列表。",
+            "- 群聊中可适度用表情/颜文字活跃气氛;私聊保持耐心与专注。",
+            "- 生成了图片/语音/视频后,必须调用对应的 qq_send_image / qq_send_voice 工具发到当前会话,并简短说明。",
+            "- 收到语音/图片消息时,先用 audio_transcribe / vision_analyze 理解内容再回应。",
+            "- 检索到知识库/记忆后,直接以自然语言回答,不要展示内部 JSON 结构。",
+            "- 不确定或工具失败时如实说明,不要编造结果。",
+        ]
+        if event.message_type == "group":
+            guidance.append("- 群聊回复保持简短(通常 2-3 行),多人语境下点明你回应的是谁。")
+        else:
+            guidance.append("- 私聊可以更详细,一次说清要点。")
+        return "\n".join(guidance)
+
     def _build_system_prompt(self, event: AgentEvent) -> str:
         static = self._build_static_prompt()
         persona = self._persona_prompt(event)
@@ -440,6 +486,7 @@ class AgentEngine:
         parts = [
             persona,
             static,
+            self._reply_guidance_prompt(event),
             f"\n当前时间: {now}",
             f"当前会话平台: {event.platform} | 消息类型: {'群聊' if event.message_type == 'group' else '私聊'}",
             f"当前用户角色等级: {role} (7=超级管理员,4=管理员,1=普通用户)",
