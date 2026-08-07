@@ -110,6 +110,10 @@ class PluginRegistry:
         self._plugin_meta: dict[str, dict] = {}  # 插件文件名(stem) -> 插件元数据
         self._llm_tools: dict[str, Any] = {}  # name -> PluginTool(@llm_tool 生成)
         self._lifecycle: list[Any] = []  # PluginLifecycle 实例(插件内创建)
+        # 插件启停:handler_id -> 插件stem;stem -> enabled
+        self._handler_plugin: dict[str, str] = {}
+        self._plugin_enabled: dict[str, bool] = {}
+        self._state_file: str | None = None
 
     def register_dependency(self, type_: type, value: Any) -> None:
         self._deps[type_] = value
@@ -210,6 +214,10 @@ class PluginRegistry:
         )
         # 快照迭代:防止 handler 执行期间注册新 handler 导致修改迭代中的列表
         for h in list(self._handlers):
+            # 已停用插件的 handler 跳过
+            stem = self._handler_plugin.get(h.id)
+            if stem and not self._plugin_enabled.get(stem, True):
+                continue
             if not h.match(event):
                 continue
             if role_level < h.permission_level:
@@ -236,6 +244,39 @@ class PluginRegistry:
 
     def handler_count(self) -> int:
         return len(self._handlers)
+
+    # ---------- 插件启停 ----------
+
+    def set_enabled(self, plugin_name: str, enabled: bool) -> None:
+        """启停插件(disabled 的插件 handler 不再分发)。状态持久化。"""
+        self._plugin_enabled[str(plugin_name)] = bool(enabled)
+        self._save_state()
+
+    def enabled_state(self) -> dict[str, bool]:
+        return dict(self._plugin_enabled)
+
+    def load_state(self, state_file: str | None) -> None:
+        """从 JSON 文件加载插件启停状态(重启后保持)。"""
+        self._state_file = state_file
+        if not state_file:
+            return
+        try:
+            data = json.loads(Path(state_file).read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                self._plugin_enabled = {str(k): bool(v) for k, v in data.items()}
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    def _save_state(self) -> None:
+        if not self._state_file:
+            return
+        try:
+            Path(self._state_file).parent.mkdir(parents=True, exist_ok=True)
+            Path(self._state_file).write_text(
+                json.dumps(self._plugin_enabled, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError:
+            pass
 
     # ---------- 外部插件加载 ----------
 
@@ -283,6 +324,10 @@ class PluginRegistry:
         # 收集插件内创建的生命周期注册器(模块级 __lifecycle__ 或直接提供 install())
         for lc in getattr(module, "__lifecycle__", []) or []:
             self._lifecycle.append(lc)
+        # 记录 handler → 插件映射(供启停过滤)
+        for hid in new_ids:
+            self._handler_plugin[hid] = path.stem
+        self._plugin_enabled.setdefault(path.stem, True)
         # 元数据:优先 metadata.yaml(目录规范),回退同名 plugin.json
         self._plugin_meta[path.stem] = self._read_meta(path)
         _logger.info("外部插件已加载: %s (%d 个 handler, %d 个 llm_tool)", path.stem, len(new_ids), len(getattr(module, "__llm_tools__", []) or []))

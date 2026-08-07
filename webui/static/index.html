@@ -116,6 +116,7 @@
     <button class="nav-item" data-page="tasks" onclick="showPage('tasks')"><span class="ico">⏰</span>定时任务</button>
     <button class="nav-item" data-page="knowledge" onclick="showPage('knowledge')"><span class="ico">📚</span>知识库</button>
     <button class="nav-item" data-page="adapters" onclick="showPage('adapters')"><span class="ico">🌐</span>适配器</button>
+    <button class="nav-item" data-page="personas" onclick="showPage('personas')"><span class="ico">🎭</span>人格</button>
 
     <div class="nav-group">系统</div>
     <button class="nav-item" data-page="tools" onclick="showPage('tools')"><span class="ico">🛠️</span>工具</button>
@@ -154,8 +155,10 @@
       <div class="chat-wrap">
         <div id="chat"></div>
         <div class="chat-input">
-          <input id="chatInput" placeholder="输入消息...(可用 /clear 清空会话)" onkeydown="if(event.key==='Enter')sendChat()">
+          <input id="chatInput" placeholder="输入消息...(命令:/clear 清空 /model 名 切模型)" onkeydown="if(event.key==='Enter')sendChat()">
           <button onclick="sendChat()">发送</button>
+          <input id="modelInput" placeholder="切换模型,如 gpt-4o" style="max-width:180px" onkeydown="if(event.key==='Enter')switchModel()">
+          <button class="secondary" onclick="switchModel()">切模型</button>
           <button class="secondary" onclick="clearChat()">清空</button>
         </div>
       </div>
@@ -236,6 +239,20 @@
       <div class="card"><h3>平台适配器状态</h3><div id="adapterList"></div></div>
     </div>
 
+    <!-- 人格 -->
+    <div id="page-personas" class="hidden">
+      <div class="page-title">🎭 人格管理</div>
+      <div class="card"><h3>新建 / 编辑人格</h3>
+        <div class="row"><input id="perId" placeholder="ID(留空自动生成,编辑时填已有 ID)" style="max-width:240px">
+          <input id="perName" placeholder="名称"></div>
+        <textarea id="perPrompt" style="height:130px;margin-top:10px" placeholder="system_prompt(人格设定)"></textarea>
+        <div class="row" style="margin-top:10px"><input id="perDesc" placeholder="描述(可选)" style="flex:1">
+          <button onclick="savePersona()">保存</button><button class="secondary" onclick="resetPersonaForm()">清空</button>
+          <span class="msg-green" id="perMsg"></span></div>
+      </div>
+      <div class="card"><h3>人格列表</h3><div id="personaList"></div></div>
+    </div>
+
     <!-- 工具 -->
     <div id="page-tools" class="hidden">
       <div class="page-title">🛠️ 工具</div>
@@ -305,7 +322,7 @@ async function doLogin() {
 
 function showPage(name) {
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === name));
-  const pages = ['status','chat','providers','plugins','tasks','knowledge','adapters','tools','mcp','skills','audit','subagents','config'];
+  const pages = ['status','chat','providers','plugins','tasks','knowledge','adapters','personas','tools','mcp','skills','audit','subagents','config'];
   pages.forEach(p => $('page-' + p).classList.toggle('hidden', p !== name));
   if (name === 'tools') loadTools();
   if (name === 'tasks') { loadTasks(); loadTaskHistory(); }
@@ -318,6 +335,7 @@ function showPage(name) {
   if (name === 'adapters') loadAdapters();
   if (name === 'providers') loadProviders();
   if (name === 'knowledge') loadKnowledge();
+  if (name === 'personas') loadPersonas();
   if (name === 'status') loadStatus();
   if (name === 'chat') connectChat();
 }
@@ -423,10 +441,25 @@ async function loadPlugins() {
   const p = res.data.plugins || [];
   $('handlerCount').textContent = 'handler: ' + (res.data.handler_count || 0);
   $('pluginList').innerHTML = p.length
-    ? p.map(x => `<div class="item"><code>${esc(x.name)} ${x.version ? 'v'+esc(x.version) : ''}</code>
+    ? p.map(x => `<div class="item"><code>${esc(x.name)} ${x.version ? 'v'+esc(x.version) : ''}
+        <span class="badge" style="${x.enabled ? 'background:rgba(61,220,132,.15);color:var(--green)' : 'background:rgba(255,93,108,.15);color:var(--red)'}">${x.enabled ? '启用' : '停用'}</span></code>
       <small>${esc(x.description)}</small>
-      <small class="muted">命令: ${esc((x.commands||[]).join(', ') || '无')} | 依赖: ${esc((x.dependencies||[]).join(',') || '无')}</small></div>`).join('')
+      <small class="muted">命令: ${esc((x.commands||[]).join(', ') || '无')} | 依赖: ${esc((x.dependencies||[]).join(',') || '无')}</small>
+      <div class="actions">
+        <button class="secondary small" onclick="togglePlugin('${x.stem}', ${!x.enabled})">${x.enabled ? '停用' : '启用'}</button>
+        <button class="danger small" onclick="uninstallPlugin('${x.stem}')">卸载</button>
+      </div></div>`).join('')
     : '<small class="muted">暂无外部插件</small>';
+}
+async function togglePlugin(stem, enabled) {
+  const res = await api('/api/plugins/toggle', 'POST', { name: stem, enabled });
+  loadPlugins();
+}
+async function uninstallPlugin(stem) {
+  if (!confirm('确认卸载插件 ' + stem + ' ?')) return;
+  const res = await api('/api/plugins/uninstall', 'POST', { name: stem });
+  if (res.data.ok) { loadPlugins(); loadMarket(); }
+  else alert('卸载失败: ' + (res.data.error || ''));
 }
 async function loadMarket() {
   $('marketMsg').textContent = '';
@@ -529,6 +562,59 @@ async function saveConfig() {
   else { $('cfgSaveMsg').textContent = '保存失败: ' + (res.data.error || ''); $('cfgSaveMsg').style.color = '#ff5d6c'; }
 }
 
+async function loadPersonas() {
+  const res = await api('/api/personas');
+  if (res.status === 401) return logout();
+  const p = res.data.personas || [];
+  $('personaList').innerHTML = p.length
+    ? p.map(x => `<div class="item"><code>${esc(x.name)} <span class="badge">${esc(x.source || 'db')}</span></code>
+      <small>${esc(x.description || '(无描述)')}</small>
+      <small class="muted">ID: ${esc(x.id)}</small>
+      <div class="actions">
+        <button class="secondary small" onclick="editPersona('${x.id}')">编辑</button>
+        <button class="secondary small" onclick="switchPersona('${x.id}')">切换</button>
+        ${x.source === 'file' ? '' : `<button class="danger small" onclick="deletePersona('${x.id}')">删除</button>`}
+      </div></div>`).join('')
+    : '<small class="muted">暂无人格(可在 data/personas/ 投放 .md 文件,或在此新建)</small>';
+}
+function resetPersonaForm() {
+  $('perId').value=''; $('perName').value=''; $('perPrompt').value=''; $('perDesc').value=''; $('perMsg').textContent='';
+}
+function editPersona(id) {
+  const list = document.querySelectorAll('#personaList .item');
+  // 简化:通过重新拉取列表找到该项
+  api('/api/personas').then(res => {
+    const p = (res.data.personas||[]).find(x => x.id === id);
+    if (p) {
+      $('perId').value = p.id; $('perName').value = p.name;
+      $('perPrompt').value = p.system_prompt || '';
+      $('perDesc').value = p.description || '';
+      $('perMsg').textContent = '已载入待编辑,点保存生效';
+      window.scrollTo(0, 0);
+    }
+  });
+}
+async function savePersona() {
+  $('perMsg').textContent = '';
+  const id = $('perId').value.trim();
+  const action = id ? 'update' : 'create';
+  const body = { action, id, name: $('perName').value.trim() || '未命名人格', system_prompt: $('perPrompt').value.trim(), description: $('perDesc').value.trim() };
+  if (!body.system_prompt) { $('perMsg').textContent = 'system_prompt 不能为空'; return; }
+  const res = await api('/api/personas', 'POST', body);
+  if (res.data.ok) { $('perMsg').textContent = '已保存'; resetPersonaForm(); loadPersonas(); }
+  else { $('perMsg').textContent = '保存失败: ' + (res.data.result?.error || res.data.error || ''); }
+}
+async function deletePersona(id) {
+  if (!confirm('确认删除人格 ' + id + ' ?')) return;
+  await api('/api/personas', 'DELETE', { id });
+  loadPersonas();
+}
+async function switchPersona(id) {
+  const res = await api('/api/personas/switch', 'POST', { id, session_id: 'webui' });
+  $('perMsg').textContent = (res.data.result?.message || '已切换');
+  alert(res.data.result?.message || '已切换');
+}
+
 async function loadAdapters() {
   const res = await api('/api/adapters');
   if (res.status === 401) return logout();
@@ -588,6 +674,15 @@ function sendChat() {
   let clientId = localStorage.getItem('webui_client_id');
   if (!clientId) { clientId = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('webui_client_id', clientId); }
   chatWs.send(JSON.stringify({ text, user_id: clientId }));
+}
+function switchModel() {
+  const model = $('modelInput').value.trim();
+  if (!model) return;
+  $('modelInput').value = '';
+  addChat('user', '/model ' + model);
+  if (chatWs && chatWs.readyState === 1) {
+    chatWs.send(JSON.stringify({ text: '/model ' + model, user_id: localStorage.getItem('webui_client_id') || 'webui' }));
+  }
 }
 async function sendBroadcast() {
   const group_id = $('broadcastGroup').value.trim();

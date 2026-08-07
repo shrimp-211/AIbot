@@ -69,6 +69,14 @@ class PluginInstaller:
             if tmp is not None:
                 shutil.rmtree(tmp, ignore_errors=True)
 
+    def uninstall(self, name: str) -> dict:
+        """卸载已安装的插件(删除插件目录)。"""
+        target = self.plugins_dir / _safe_name(str(name))
+        if not target.is_dir():
+            return {"ok": False, "error": f"插件未安装: {name}"}
+        shutil.rmtree(target, ignore_errors=True)
+        return {"ok": True, "removed": str(target)}
+
     @staticmethod
     def _locate_plugin_dir(root: Path) -> Path:
         """git 仓库根下的插件目录:含 metadata.yaml 的目录(或仓库根)。"""

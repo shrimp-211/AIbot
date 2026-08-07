@@ -579,6 +579,7 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
 
     # 插件注册中心
     plugin_registry = PluginRegistry(auth)
+    plugin_registry.load_state(ROOT_DIR / "data" / "plugins_state.json")
     plugin_registry.register_dependency(Config, config)
     plugin_registry.register_dependency(AuthManager, auth)
     plugin_registry.register_dependency(MemoryStore, memory)

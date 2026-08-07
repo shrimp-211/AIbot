@@ -40,6 +40,12 @@ def _safe_int(value: Any, default: int, lo: int | None = None, hi: int | None = 
     return n
 
 
+def _safe_plugin_name(name: str) -> str:
+    import re
+
+    return re.sub(r"[^A-Za-z0-9_\-]", "_", name or "plugin")[:64]
+
+
 def _is_secret_key(key: str) -> bool:
     k = key.lower()
     return (
@@ -188,8 +194,14 @@ class WebUIServer:
         self._app.router.add_post("/api/broadcast", self._broadcast)
         self._app.router.add_get("/api/plugins", self._plugins_list)
         self._app.router.add_post("/api/plugins/reload", self._plugins_reload)
+        self._app.router.add_post("/api/plugins/toggle", self._plugins_toggle)
+        self._app.router.add_post("/api/plugins/uninstall", self._plugins_uninstall)
         self._app.router.add_get("/api/market", self._market_list)
         self._app.router.add_post("/api/market/install", self._market_install)
+        self._app.router.add_get("/api/personas", self._personas_list)
+        self._app.router.add_post("/api/personas", self._personas_save)
+        self._app.router.add_delete("/api/personas", self._personas_delete)
+        self._app.router.add_post("/api/personas/switch", self._personas_switch)
         self._app.router.add_get("/api/config", self._config_view)
         self._app.router.add_post("/api/config", self._config_save)
         self._app.router.add_get("/api/adapters", self._adapters_list)
@@ -393,20 +405,24 @@ class WebUIServer:
             return web.json_response({"ok": False, "error": "未授权"}, status=401)
         registry = self._deps.get("plugin_registry")
         if registry is None:
-            return web.json_response({"ok": True, "plugins": []})
+            return web.json_response({"ok": True, "plugins": [], "enabled_state": {}})
         meta = registry.plugin_metadata()
+        enabled_state = registry.enabled_state()
         plugins = []
         for stem, m in sorted(meta.items()):
             plugins.append({
                 "name": m.get("name") or stem,
+                "stem": stem,
                 "version": m.get("version", ""),
                 "description": m.get("description", ""),
                 "commands": m.get("commands", []),
                 "dependencies": m.get("dependencies", []),
+                "enabled": enabled_state.get(stem, True),
             })
         return web.json_response({
             "ok": True,
             "plugins": plugins,
+            "enabled_state": enabled_state,
             "handler_count": registry.handler_count(),
         })
 
@@ -755,10 +771,129 @@ class WebUIServer:
                     await registry.reload_from_directory(plugin_dir)
         return web.json_response(result)
 
+    # ---------- 插件启停 / 卸载 / 人格管理 ----------
+
+    def _registry(self):
+        return self._deps.get("plugin_registry")
+
+    def _persona_mgr(self):
+        engine = self._deps.get("engine")
+        return getattr(engine, "persona_manager", None) if engine else None
+
+    async def _plugins_toggle(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        registry = self._registry()
+        if registry is None:
+            return web.json_response({"ok": False, "error": "插件模块未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        name = str(data.get("name", "") or "")
+        enabled = bool(data.get("enabled", True))
+        if not name:
+            return web.json_response({"ok": False, "error": "缺少插件名"}, status=400)
+        registry.set_enabled(name, enabled)
+        return web.json_response({"ok": True, "name": name, "enabled": enabled})
+
+    async def _plugins_uninstall(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        name = str(data.get("name", "") or "")
+        if not name:
+            return web.json_response({"ok": False, "error": "缺少插件名"}, status=400)
+        try:
+            from ..main import _plugin_dirs
+
+            import shutil
+
+            removed = False
+            for plugin_dir in _plugin_dirs():
+                target = Path(plugin_dir) / _safe_plugin_name(name)
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                    removed = True
+            if not removed:
+                return web.json_response({"ok": False, "error": f"插件未找到: {name}"}, status=404)
+            registry = self._registry()
+            if registry is not None:
+                registry.unload_external()
+                for plugin_dir in _plugin_dirs():
+                    await registry.load_from_directory(plugin_dir)
+            return web.json_response({"ok": True, "removed": name})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("插件卸载失败")
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def _personas_list(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        pm = self._persona_mgr()
+        if pm is None:
+            return web.json_response({"ok": True, "personas": []})
+        personas = pm.list()
+        for p in personas:
+            full = pm.get(p["id"]) or {}
+            p["system_prompt"] = (full.get("system_prompt") or "")[:2000]
+        return web.json_response({"ok": True, "personas": personas})
+
+    async def _personas_save(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        pm = self._persona_mgr()
+        if pm is None:
+            return web.json_response({"ok": False, "error": "人格模块未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        pid = str(data.get("id", "") or "")
+        name = str(data.get("name", "") or "")
+        system_prompt = str(data.get("system_prompt", "") or "")
+        description = str(data.get("description", "") or "")
+        if data.get("action") == "update" and pid:
+            return web.json_response({"ok": True, "result": pm.update(
+                pid, name=name, system_prompt=system_prompt, description=description,
+            )})
+        return web.json_response({"ok": True, "result": pm.create(
+            persona_id=pid or None, name=name, system_prompt=system_prompt, description=description,
+        )})
+
+    async def _personas_delete(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        pm = self._persona_mgr()
+        if pm is None:
+            return web.json_response({"ok": False, "error": "人格模块未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        return web.json_response({"ok": True, "result": pm.delete(str(data.get("id", "") or ""))})
+
+    async def _personas_switch(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        pm = self._persona_mgr()
+        if pm is None:
+            return web.json_response({"ok": False, "error": "人格模块未启用"}, status=500)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        pid = str(data.get("id", "") or "") or None
+        session_id = str(data.get("session_id", "") or "webui")
+        return web.json_response({"ok": True, "result": pm.switch(session_id, pid)})
+
     async def _plugins_reload(self, request: web.Request) -> web.Response:
         if not self._check_auth(request):
             return web.json_response({"ok": False, "error": "未授权"}, status=401)
-        registry = self._deps.get("plugin_registry")
+        registry = self._registry()
         if registry is None:
             return web.json_response({"ok": False, "error": "插件模块未启用"}, status=500)
         try:
