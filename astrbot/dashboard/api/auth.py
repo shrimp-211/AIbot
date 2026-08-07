@@ -535,31 +535,39 @@ def ws_has_scope(ctx: AuthContext, scope: str) -> bool:
     return "*" in scopes or scope in scopes
 
 
+async def _try_ws_api_key(websocket, raw_key: str) -> tuple[AuthContext | None, str | None]:
+    """尝试用原始 API Key 认证 WebSocket。成功返回 (AuthContext, raw_key)。"""
+    from astrbot.dashboard.services.api_key_service import ApiKeyService
+
+    key_hash = ApiKeyService.hash_key(raw_key)
+    try:
+        api_key = await websocket.app.state.db.get_active_api_key_by_hash(key_hash)
+        if api_key is not None:
+            scopes = list(getattr(api_key, "scopes", []) or [])
+            return (
+                AuthContext(
+                    username=f"{API_KEY_USERNAME_PREFIX}{api_key.key_id}",
+                    scopes=scopes,
+                    via="api_key",
+                ),
+                raw_key,
+            )
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None
+
+
 async def authenticate_websocket(websocket) -> tuple[AuthContext | None, str | None]:
-    """WebSocket 认证:验证 API Key 或 JWT。
+    """WebSocket 认证:验证 API Key(支持 ApiKey/X-API-Key/Bearer/query)或 JWT。
 
     返回 ``(AuthContext, raw_api_key)``;认证失败返回 ``(None, None)``。
     """
-    from astrbot.dashboard.services.api_key_service import ApiKeyService
-
     # 1. API Key(query/header)
     raw_key = _extract_ws_raw_api_key(websocket)
     if raw_key:
-        key_hash = ApiKeyService.hash_key(raw_key)
-        try:
-            api_key = await websocket.app.state.db.get_active_api_key_by_hash(key_hash)
-            if api_key is not None:
-                scopes = list(getattr(api_key, "scopes", []) or [])
-                return (
-                    AuthContext(
-                        username=f"{API_KEY_USERNAME_PREFIX}{api_key.key_id}",
-                        scopes=scopes,
-                        via="api_key",
-                    ),
-                    raw_key,
-                )
-        except Exception:  # noqa: BLE001
-            pass
+        result = await _try_ws_api_key(websocket, raw_key)
+        if result[0] is not None:
+            return result
 
     # 2. JWT(query ?token= / 子协议 auth.<token> / cookie)
     token = (websocket.query_params.get("token") or "").strip()
@@ -582,7 +590,19 @@ async def authenticate_websocket(websocket) -> tuple[AuthContext | None, str | N
             if isinstance(username, str) and username.strip():
                 return AuthContext(username=username, scopes=["*"], via="jwt"), None
         except Exception:  # noqa: BLE001
-            pass
+            # JWT 无效:尝试把该 token 当作 API Key
+            result = await _try_ws_api_key(websocket, token)
+            if result[0] is not None:
+                return result
+
+    # 3. Bearer header 内容作为 API Key 兜底(与 HTTP 路径行为一致)
+    auth_header = websocket.headers.get("Authorization", "").strip()
+    if auth_header.startswith("Bearer "):
+        bearer = auth_header[len("Bearer ") :].strip()
+        if bearer:
+            result = await _try_ws_api_key(websocket, bearer)
+            if result[0] is not None:
+                return result
     return None, None
 
 

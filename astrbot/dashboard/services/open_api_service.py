@@ -228,9 +228,19 @@ class OpenApiService:
                         break
                     if kind == "plain":
                         reply_parts.append(data)
-                        await send_json({"type": "delta", "data": data})
+                        try:
+                            await send_json({"type": "delta", "data": data})
+                        except Exception:
+                            if not task.done():
+                                task.cancel()
+                            raise
                     elif kind == "reasoning":
-                        await send_json({"type": "reasoning", "data": data})
+                        try:
+                            await send_json({"type": "reasoning", "data": data})
+                        except Exception:
+                            if not task.done():
+                                task.cancel()
+                            raise
                 reply = final_reply or "".join(reply_parts)
                 await send_json({"type": "message", "data": {"content": reply}})
         except asyncio.CancelledError:

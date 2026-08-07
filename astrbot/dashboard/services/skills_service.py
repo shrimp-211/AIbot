@@ -142,7 +142,9 @@ class SkillsService:
         names = []
         for f in files:
             raw = await f.read()
-            fname = getattr(f, "filename", "") or "SKILL.md"
+            if len(raw) > 5 * 1024 * 1024:
+                raise SkillsServiceError("技能文件过大(上限 5MB)")
+            fname = os.path.basename(getattr(f, "filename", "") or "SKILL.md")
             if fname.endswith(".zip"):
                 await self._upload_zip(raw)
                 continue

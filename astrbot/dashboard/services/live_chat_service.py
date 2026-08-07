@@ -44,7 +44,7 @@ class LiveChatService:
         close=None,
     ) -> None:
         """运行一个 WebSocket 聊天会话。"""
-        self._ws_username = username or "anonymous"
+        ws_username = username or "anonymous"
         try:
             await send_json({"type": "session_ready", "session_id": "live"})
         except Exception:
@@ -78,13 +78,13 @@ class LiveChatService:
                 if t == "end_speaking":
                     pcm = b"".join(audio_buffer)
                     audio_buffer.clear()
-                    await self._handle_voice(pcm, send_json)
+                    await self._handle_voice(pcm, send_json, ws_username)
                     continue
                 if t == "interrupt":
                     continue
                 # 文本消息
                 if "message" in msg or "text" in msg:
-                    await self._handle_text(msg, send_json)
+                    await self._handle_text(msg, send_json, ws_username)
         except asyncio.CancelledError:
             pass
         except Exception as exc:  # noqa: BLE001
@@ -96,7 +96,7 @@ class LiveChatService:
 
     # ================= 文本聊天 =================
 
-    async def _handle_text(self, msg: dict, send_json) -> None:
+    async def _handle_text(self, msg: dict, send_json, ws_username: str = "anonymous") -> None:
         message = msg.get("message", msg.get("text", ""))
         if isinstance(message, list):
             message = "".join(
@@ -108,20 +108,18 @@ class LiveChatService:
         message_id = str(msg.get("message_id") or uuid.uuid4())
         session_id = str(msg.get("session_id") or "default")
         await send_json({"type": "message_saved", "data": {"id": message_id}})
-        reply = await self._run_engine(text, send_json)
+        reply = await self._run_engine(text, send_json, ws_username)
         await send_json({"type": "complete", "data": reply or "", "message_id": message_id})
         await send_json({"type": "end", "message_id": message_id})
 
-    async def _run_engine(self, text: str, send_json) -> str:
+    async def _run_engine(self, text: str, send_json, ws_username: str = "anonymous") -> str:
         """调用本项目引擎,流式回传。返回最终回复。"""
         if self.engine is None:
             return "引擎未配置,无法聊天。"
         queue: asyncio.Queue = asyncio.Queue()
 
         def _make_event():
-            safe_user = "webui_" + re.sub(
-                r"[^A-Za-z0-9_\-]", "_", str(getattr(self, "_ws_username", "anonymous"))
-            )[:32]
+            safe_user = "webui_" + re.sub(r"[^A-Za-z0-9_\-]", "_", str(ws_username))[:32]
             from src.adapter.event import AgentEvent
             from src.adapter.message import MessageChain, MessageSegment
 
@@ -184,7 +182,7 @@ class LiveChatService:
 
     # ================= 语音聊天 =================
 
-    async def _handle_voice(self, pcm: bytes, send_json) -> None:
+    async def _handle_voice(self, pcm: bytes, send_json, ws_username: str = "anonymous") -> None:
         """语音:STT → 引擎 → TTS。"""
         try:
             text = await self._stt_from_pcm(pcm)
@@ -196,7 +194,7 @@ class LiveChatService:
             await send_json({"type": "error", "data": "未识别到语音"})
             return
         await send_json({"type": "stt", "data": text})
-        reply = await self._run_engine(text, send_json)
+        reply = await self._run_engine(text, send_json, ws_username)
         await send_json({"type": "complete", "data": reply})
         # TTS 回传
         if self.tts is not None:

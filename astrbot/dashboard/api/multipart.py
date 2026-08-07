@@ -23,6 +23,18 @@ class UploadFileAdapter:
         except (TypeError, ValueError):
             return None
 
+    async def read(self, size: int = -1) -> bytes:
+        """流式读取(委托底层 UploadFile,游标自动推进)。"""
+        if size == -1 or size is None:
+            return await self._upload_file.read()
+        return await self._upload_file.read(size)
+
+    async def seek(self, offset: int, whence: int = 0) -> None:
+        try:
+            await self._upload_file.seek(offset, whence)
+        except Exception:
+            pass
+
     async def save(self, destination: str | Path) -> None:
         path = Path(destination)
         try:
