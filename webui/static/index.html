@@ -86,6 +86,19 @@
   .login-box input { margin-bottom: 14px; }
   code, pre { font-family: "SF Mono", Consolas, monospace; }
   .scroll-area { max-height: 500px; overflow-y: auto; }
+  /* 工具调用卡片 */
+  .tool-call { align-self: flex-start; width: 100%; max-width: 82%; background: #20202c; border: 1px solid var(--border); border-radius: 10px; margin: 2px 0; overflow: hidden; }
+  .tc-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer; }
+  .tc-head b { color: var(--accent); font-size: 13px; }
+  .tc-args { color: var(--muted); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tc-toggle { color: var(--muted); font-size: 12px; transition: transform .2s; }
+  .tool-call.open .tc-toggle { transform: rotate(90deg); }
+  .tc-body { display: none; padding: 0 12px 12px; }
+  .tool-call.open .tc-body { display: block; }
+  .tc-label { color: var(--muted); font-size: 11px; margin: 6px 0 2px; }
+  .tc-body pre { background: #16161e; border-radius: 6px; padding: 8px; font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+  .copy-btn { background: none; border: none; color: var(--muted); font-size: 11px; padding: 2px 4px; margin-left: 8px; cursor: pointer; opacity: .5; }
+  .msg:hover .copy-btn { opacity: 1; }
 </style>
 </head>
 <body>
@@ -180,6 +193,29 @@
           <button onclick="testProviders()">连通性测试</button><span class="msg-green" id="providerMsg"></span>
         </div>
         <div class="provider-grid" id="providerList"></div>
+      </div>
+      <div class="card"><h3>配置提供商(参照 AstrBot ProviderPage)
+          <button class="secondary small" onclick="loadProviderEditor()">刷新</button><span class="msg-green" id="peMsg"></span></h3>
+        <div class="row" style="margin-bottom:12px">
+          <select id="peKey" onchange="peLoadSection()">
+            <option value="llm">LLM(主对话模型)</option>
+            <option value="stt">STT(语音识别)</option>
+            <option value="tts">TTS(语音合成)</option>
+            <option value="embedding">Embedding(向量化)</option>
+            <option value="rerank">Rerank(重排序)</option>
+          </select>
+          <input id="peType" placeholder="type,如 openai_compatible / anthropic" style="max-width:240px">
+          <input id="peModel" placeholder="model,如 gpt-4o-mini" style="max-width:200px">
+        </div>
+        <div class="row" style="margin-bottom:12px">
+          <input id="peKey_ak" placeholder="api_key(留空不改)" style="max-width:260px">
+          <input id="peBase" placeholder="base_url" style="flex:1">
+        </div>
+        <div class="row" style="margin-bottom:0">
+          <button onclick="peSave()">保存配置</button>
+          <button class="danger" onclick="peDelete()">删除该段</button>
+          <span class="muted">保存后写入 config.yaml,需重启生效</span>
+        </div>
       </div>
     </div>
 
@@ -507,6 +543,47 @@ async function testProviders() {
   $('providerMsg').textContent = '';
 }
 
+let peSections = {};
+async function loadProviderEditor() {
+  const res = await api('/api/providers/editor');
+  if (res.status === 401) return logout();
+  peSections = res.data.sections || {};
+  peLoadSection();
+}
+function peLoadSection() {
+  const key = $('peKey').value;
+  const sec = peSections[key];
+  if (!sec) { $('peType').value=''; $('peModel').value=''; $('peKey_ak').value=''; $('peBase').value=''; return; }
+  const c = sec.config || {};
+  $('peType').value = c.type || '';
+  $('peModel').value = c.model || '';
+  $('peKey_ak').value = c.api_key || '';
+  $('peBase').value = c.base_url || c.voice || '';
+}
+async function peSave() {
+  $('peMsg').textContent = '';
+  const key = $('peKey').value;
+  const config = {
+    type: $('peType').value.trim(),
+    model: $('peModel').value.trim(),
+    api_key: $('peKey_ak').value.trim(),
+    base_url: $('peBase').value.trim(),
+  };
+  // 清理空字段(api_key 留空表示不改)
+  Object.keys(config).forEach(k => { if (!config[k]) delete config[k]; });
+  if (!config.type) { $('peMsg').textContent = '请填写 type'; return; }
+  const res = await api('/api/providers/editor', 'POST', { key, config });
+  if (res.data.ok) { $('peMsg').textContent = '已保存 ' + key + res.data.note || ''; loadProviderEditor(); loadProviders(); }
+  else { $('peMsg').textContent = '保存失败: ' + (res.data.error || ''); }
+}
+async function peDelete() {
+  const key = $('peKey').value;
+  if (!confirm('确认删除 ' + key + ' 提供商段?')) return;
+  const res = await api('/api/providers/editor', 'DELETE', { key });
+  if (res.data.ok) { $('peMsg').textContent = '已删除 ' + key; loadProviderEditor(); loadProviders(); }
+  else { $('peMsg').textContent = '删除失败: ' + (res.data.error || ''); }
+}
+
 async function loadKnowledge() {
   const res = await api('/api/knowledge');
   if (res.status === 401) return logout();
@@ -634,6 +711,7 @@ function connectChat() {
     const d = JSON.parse(e.data);
     if (d.role === 'progress') { addChat('progress', d.text); return; }
     if (d.role === 'reasoning') { addChat('reasoning', d.text); return; }
+    if (d.role === 'tool_call') { addToolCall(d); return; }
     if (d.role === 'stream') {
       if (!streamBubble || !document.body.contains(streamBubble)) {
         streamBubble = document.createElement('div');
@@ -658,8 +736,35 @@ function addChat(role, text) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
   const label = role === 'user' ? '我' : (role === 'progress' ? '⏳' : (role === 'reasoning' ? '🧠' : 'AI'));
-  div.innerHTML = (role === 'user' || role === 'assistant') ? `<span>${esc(text)}</span>` : `<b>${label}:</b> <span>${esc(text)}</span>`;
+  div.innerHTML = (role === 'user' || role === 'assistant')
+    ? `<span>${esc(text)}</span><button class="copy-btn" onclick="copyMsg(this)" title="复制">📋</button>`
+    : `<b>${label}:</b> <span>${esc(text)}</span>`;
   $('chat').appendChild(div);
+  $('chat').scrollTop = $('chat').scrollHeight;
+}
+function copyMsg(btn) {
+  const text = btn.parentElement.querySelector('span').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = '📋'; }, 1200);
+  });
+}
+function addToolCall(d) {
+  const card = document.createElement('div');
+  card.className = 'tool-call';
+  let argsPreview = '';
+  try { argsPreview = JSON.stringify(d.args || {}); } catch (e) {}
+  card.innerHTML = `
+    <div class="tc-head" onclick="this.parentElement.classList.toggle('open')">
+      <span class="tc-ico">🔧</span> <b>${esc(d.name)}</b>
+      <span class="tc-args">${esc(argsPreview.slice(0, 80))}</span>
+      <span class="tc-toggle">▸</span>
+    </div>
+    <div class="tc-body">
+      <div class="tc-label">参数</div><pre>${esc(argsPreview)}</pre>
+      <div class="tc-label">结果</div><pre>${esc((d.result || '').slice(0, 600))}</pre>
+    </div>`;
+  $('chat').appendChild(card);
   $('chat').scrollTop = $('chat').scrollHeight;
 }
 function clearChat() {

@@ -752,6 +752,13 @@ class AgentEngine:
                 # 工具执行前提示进度(仅私聊/WebUI)
                 await self._send_progress(ctx, f"🔧 正在执行 `{name}`...")
                 output = await self._execute_tool(ctx, tc)
+                # 工具调用结果回调(WebUI 渲染工具调用卡片,参照 AstrBot ToolCallCard)
+                tcb = getattr(ctx.event, "_tool_callback", None)
+                if tcb is not None:
+                    try:
+                        await tcb(name, tc.get("arguments") or {}, (output or "")[:500])
+                    except Exception:  # noqa: BLE001
+                        pass
                 if self.hooks:
                     await self.hooks.trigger(
                         "post_tool_use", tool_name=name, output=output

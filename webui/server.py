@@ -186,6 +186,9 @@ class WebUIServer:
         self._app.router.add_post("/api/knowledge/search", self._knowledge_search)
         self._app.router.add_get("/api/providers", self._providers)
         self._app.router.add_post("/api/providers/test", self._providers_test)
+        self._app.router.add_get("/api/providers/editor", self._providers_editor_get)
+        self._app.router.add_post("/api/providers/editor", self._providers_editor_save)
+        self._app.router.add_delete("/api/providers/editor", self._providers_editor_delete)
         self._app.router.add_get("/api/orchestrator", self._orchestrator)
         self._app.router.add_get("/api/mcp", self._mcp_status)
         self._app.router.add_get("/api/skills", self._skills)
@@ -690,6 +693,98 @@ class WebUIServer:
                 results.append({"key": p["key"], "name": p["name"], "ok": False, "error": str(exc)})
         return web.json_response({"ok": True, "results": results})
 
+    # ---------- 提供商配置编辑器(增删改,参照 AstrBot ProviderPage) ----------
+
+    # 可编辑的 provider 配置段(段路径 -> 默认结构)
+    _PROVIDER_SECTIONS = {
+        "llm": ("llm.provider", {"type": "openai_compatible", "model": "gpt-4o-mini", "api_key": "", "base_url": ""}),
+        "stt": ("provider_stt", {"type": "whisper", "api_key": "", "model": "whisper-1"}),
+        "tts": ("provider_tts", {"type": "edge", "voice": "zh-CN-XiaoxiaoNeural"}),
+        "embedding": ("provider_embedding", {"type": "none", "api_key": "", "model": "text-embedding-3-small"}),
+        "rerank": ("provider_rerank", {"type": "none", "api_key": "", "model": "rerank-multilingual-v3.0"}),
+    }
+
+    def _load_provider_sections(self) -> dict:
+        """读取当前 provider 配置段(掩码密钥),供编辑器展示。"""
+        out = {}
+        for key, (path, default) in self._PROVIDER_SECTIONS.items():
+            data = self._config.get(path) or {}
+            if not isinstance(data, dict):
+                data = {}
+            out[key] = {
+                "key": key, "path": path, "config": _mask_secrets(dict(default, **data)),
+                "exists": bool(data),
+            }
+        return out
+
+    async def _providers_editor_get(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        return web.json_response({"ok": True, "sections": self._load_provider_sections()})
+
+    async def _providers_editor_save(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        key = str(data.get("key", "") or "")
+        config = data.get("config", {})
+        if key not in self._PROVIDER_SECTIONS:
+            return web.json_response({"ok": False, "error": f"未知提供商段: {key}"}, status=400)
+        if not isinstance(config, dict):
+            return web.json_response({"ok": False, "error": "config 必须是对象"}, status=400)
+        path, _default = self._PROVIDER_SECTIONS[key]
+        # 掩码回填:占位符替换为当前真实值(与配置编辑器一致)
+        current = self._config.get(path) or {}
+        if isinstance(current, dict):
+            _restore_secrets(config, current)
+        # 原子写入 config.yaml
+        try:
+            def _write() -> None:
+                cur = self._config.raw() or {}
+                if path == "llm.provider":
+                    llm = dict(cur.get("llm") or {})
+                    llm["provider"] = dict(config)
+                    cur["llm"] = llm
+                else:
+                    cur[path] = dict(config)
+                save_config(self._config_path, cur)
+
+            await asyncio.to_thread(_write)
+        except OSError as exc:
+            return web.json_response({"ok": False, "error": f"写入失败: {exc}"}, status=500)
+        return web.json_response({"ok": True, "key": key, "note": "已保存到 config.yaml,需重启生效"})
+
+    async def _providers_editor_delete(self, request: web.Request) -> web.Response:
+        if not self._check_auth(request):
+            return web.json_response({"ok": False, "error": "未授权"}, status=401)
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        key = str(data.get("key", "") or "")
+        if key not in self._PROVIDER_SECTIONS:
+            return web.json_response({"ok": False, "error": f"未知提供商段: {key}"}, status=400)
+        path, _default = self._PROVIDER_SECTIONS[key]
+
+        def _write() -> None:
+            cur = self._config.raw() or {}
+            if path == "llm.provider":
+                llm = dict(cur.get("llm") or {})
+                llm.pop("provider", None)
+                cur["llm"] = llm
+            else:
+                cur.pop(path, None)
+            save_config(self._config_path, cur)
+
+        try:
+            await asyncio.to_thread(_write)
+        except OSError as exc:
+            return web.json_response({"ok": False, "error": f"删除失败: {exc}"}, status=500)
+        return web.json_response({"ok": True, "key": key, "note": "已删除,需重启生效"})
+
     # ---------- 定时任务 CRUD ----------
 
     async def _orchestrator(self, request: web.Request) -> web.Response:
@@ -962,6 +1057,16 @@ class WebUIServer:
                     await ws.send_str(json.dumps({"role": "stream", "text": _content}))
                 elif _reasoning and not ws.closed:
                     await ws.send_str(json.dumps({"role": "reasoning", "text": _reasoning}))
+
+            async def _tool_cb(_name: str, _args: dict, _result: str) -> None:
+                # 工具调用卡片(参照 AstrBot ToolCallCard)
+                if not ws.closed:
+                    await ws.send_str(json.dumps({
+                        "role": "tool_call", "name": _name,
+                        "args": _args, "result": _result,
+                    }))
+
+            event._tool_callback = _tool_cb
 
             event._stream_callback = _stream
 
