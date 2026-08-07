@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from .base import Tool, ToolContext
@@ -66,6 +67,12 @@ class KnowledgeAddTool(Tool):
             try:
                 from ..knowledge.readers import ContentReader
 
+                # 路径安全校验:拒绝 .env/secrets 与越界路径(与 file_read deny 规则对齐)
+                p = Path(file).resolve()
+                if p.name.lower() in (".env", ".env.local") or ".env" in p.parts or "secrets" in p.parts:
+                    return {"error": "该路径受保护,禁止读取(安全策略)"}
+                if ctx.auth is not None and not ctx.auth.is_path_trusted(str(p)):
+                    return {"error": f"文件不在可信目录内: {file}"}
                 content = await ContentReader().read_file(file)
                 source = f"file:{file}"
             except RuntimeError as exc:

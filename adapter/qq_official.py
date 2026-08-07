@@ -52,6 +52,7 @@ class QQOfficialAdapter(TaskTrackerMixin, ReverseServerMixin, BaseAdapter):
         self._running = False
         self._tasks: set[asyncio.Task] = set()
         self._msg_seq = 0
+        self._nonces: list[tuple[str, float]] = []  # webhook 防重放 nonce 缓存
 
     def _register_driver_route(self, driver: ReverseDriver, path: str) -> None:
         driver.register_http(path, self._webhook_handler, method="POST")
@@ -89,20 +90,33 @@ class QQOfficialAdapter(TaskTrackerMixin, ReverseServerMixin, BaseAdapter):
             logger.warning("QQ 官方适配器未配置 sign_secret,拒绝 webhook 请求")
             return False
         timestamp = request.headers.get("X-Timestamp", "")
-        if timestamp:
-            try:
-                ts = float(timestamp)
-            except (TypeError, ValueError):
-                logger.warning("QQ 官方 webhook 时间戳格式非法,跳过新鲜度检查")
-            else:
-                if abs(time.time() - ts) > 300:
-                    logger.warning("QQ 官方 webhook 时间戳过期(可能重放),拒绝")
-                    return False
+        if not timestamp:
+            logger.warning("QQ 官方 webhook 缺少 X-Timestamp,拒绝(防重放)")
+            return False
+        try:
+            ts = float(timestamp)
+        except (TypeError, ValueError):
+            logger.warning("QQ 官方 webhook 时间戳格式非法,拒绝")
+            return False
+        if abs(time.time() - ts) > 300:
+            logger.warning("QQ 官方 webhook 时间戳过期(可能重放),拒绝")
+            return False
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("sha256="):
             logger.warning("QQ 官方 webhook 缺少 sha256 签名头")
             return False
         nonce = request.headers.get("X-Nonce", "")
+        if nonce:
+            # 防重放:缓存已处理 nonce(环形缓冲),重复 nonce 拒绝
+            nonce_key = f"{timestamp}:{nonce}"
+            now = time.time()
+            self._nonces = [n for n in getattr(self, "_nonces", []) if now - n[1] < 600]
+            if any(n[0] == nonce_key for n in self._nonces):
+                logger.warning("QQ 官方 webhook 重复 nonce(可能重放),拒绝")
+                return False
+            self._nonces.append((nonce_key, now))
+            if len(self._nonces) > 2000:
+                self._nonces = self._nonces[-2000:]
         calc = hashlib.sha256(
             (self.sign_secret + timestamp + nonce + body.decode("utf-8", "ignore")).encode()
         ).hexdigest()

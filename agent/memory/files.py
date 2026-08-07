@@ -67,16 +67,25 @@ class FileMemoryStore:
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(path)
 
+
+def _within_base(base: Path, path: Path) -> bool:
+    """路径是否严格在 base 内(用相对路径判断,防兄弟目录前缀绕过)。"""
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
     async def read(self, name: str) -> str:
         """读取指定记忆文件(名称可含子目录,如 memory/user_pref.md)。"""
         path = (self._base / name).resolve()
-        if not str(path).startswith(str(self._base.resolve())):
+        if not _within_base(self._base.resolve(), path):
             return ""
         return await asyncio.to_thread(self._read_file, path)
 
     async def write(self, name: str, content: str) -> None:
         path = (self._base / name).resolve()
-        if not str(path).startswith(str(self._base.resolve())):
+        if not _within_base(self._base.resolve(), path):
             raise ValueError(f"非法记忆文件路径: {name}")
         await asyncio.to_thread(self._write_file, path, content)
 

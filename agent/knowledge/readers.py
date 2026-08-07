@@ -24,18 +24,13 @@ class ContentReader:
         return text.strip()
 
     async def read_url(self, url: str, max_chars: int = 500_000) -> str:
-        """SSRF 安全检查通过后抓取,提取正文(优先 trafilatura,回退 BeautifulSoup)。"""
-        from ...security.auth import is_safe_url_async
+        """逐跳 SSRF 校验通过后抓取,提取正文(优先 trafilatura,回退 BeautifulSoup)。"""
+        from ...utils.net import safe_fetch_url
 
-        if not await is_safe_url_async(url):
-            raise RuntimeError(f"URL 安全检查未通过(疑似内网地址): {url}")
-        import httpx
-
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.get(
-                url, headers={"User-Agent": "QQBot-RAG/1.0"}
-            )
-            resp.raise_for_status()
+        resp = await safe_fetch_url(
+            url, timeout=30, headers={"User-Agent": "QQBot-RAG/1.0"}
+        )
+        resp.raise_for_status()
         html = resp.text
 
         def _extract() -> str:

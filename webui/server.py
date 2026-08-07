@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from datetime import datetime
@@ -46,6 +47,7 @@ def _is_secret_key(key: str) -> bool:
         or "secret" in k
         or k.endswith("_key")
         or k.endswith("_token")
+        or k.endswith("_hash")
     )
 
 
@@ -151,9 +153,17 @@ class WebUIServer:
             self._password = str(pw)
             self._password_hash = _pbkdf2_hash(self._password)
         else:
-            self._password = secrets.token_urlsafe(6)
+            self._password = secrets.token_urlsafe(8)
             self._password_hash = _pbkdf2_hash(self._password)
-            logger.warning(f"WebUI 未配置密码,已随机生成: {self._password}")
+            # 安全:随机口令仅打印到控制台(stderr),不写入轮转日志文件
+            import sys
+
+            print(f"\n[WebUI] 未配置密码,本次随机口令: {self._password}\n", file=sys.stderr)
+            logger.warning("WebUI 未配置密码,已随机生成(口令见控制台,仅本次有效)")
+        # 登录限流:每 IP 失败计数,超过阈值锁定 60s
+        self._login_fails: dict[str, list[float]] = {}
+        self._login_lockout = 60
+        self._login_max_fails = 5
 
     def _setup_routes(self) -> None:
         self._app.router.add_get("/", self._index)
@@ -209,11 +219,21 @@ class WebUIServer:
             return False
         return True
 
+    def _login_locked(self, request: web.Request) -> bool:
+        """登录限流:每 IP 最近窗口内失败达阈值则锁定。"""
+        ip = request.remote or request.headers.get("X-Forwarded-For", "") or "?"
+        now = time.time()
+        fails = [t for t in self._login_fails.get(ip, []) if now - t < self._login_lockout]
+        self._login_fails[ip] = fails
+        return len(fails) >= self._login_max_fails
+
     async def _login(self, request: web.Request) -> web.Response:
         try:
             data = await request.json()
         except json.JSONDecodeError:
             return web.json_response({"ok": False, "error": "无效请求"}, status=400)
+        if self._login_locked(request):
+            return web.json_response({"ok": False, "error": "尝试次数过多,请稍后再试"}, status=429)
         password = data.get("password", "")
         if not isinstance(password, str):
             return web.json_response({"ok": False, "error": "密码格式错误"}, status=400)
@@ -222,6 +242,8 @@ class WebUIServer:
         else:
             ok = _verify_pbkdf2(password, self._password_hash)
         if not ok:
+            ip = request.remote or request.headers.get("X-Forwarded-For", "") or "?"
+            self._login_fails.setdefault(ip, []).append(time.time())
             return web.json_response({"ok": False, "error": "密码错误"}, status=401)
         self._prune_tokens()
         token = secrets.token_hex(32)
@@ -781,7 +803,10 @@ class WebUIServer:
             text = data.get("text", "")
             if not text:
                 continue
-            user_id = data.get("user_id", "webui")
+            # 安全:user_id 加 webui_ 前缀并清洗,防止客户端伪造真实 QQ 号冒充管理员。
+            # 引擎按 user_id 计算角色等级,"webui_xxx" 永不匹配 admin/超管 QQ。
+            raw_uid = str(data.get("user_id", "webui") or "webui")
+            user_id = "webui_" + re.sub(r"[^A-Za-z0-9_\-]", "_", raw_uid)[:32]
             event = AgentEvent(
                 message_type="private",
                 user_id=user_id,

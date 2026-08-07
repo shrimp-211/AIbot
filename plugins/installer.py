@@ -52,9 +52,12 @@ class PluginInstaller:
                 if target.exists():
                     shutil.rmtree(target)
                 shutil.copytree(plugin_dir, target, ignore=shutil.ignore_patterns(".git", "__pycache__"))
-            # 安装依赖
+            # 安装依赖(校验:拒绝 pip 选项注入与非法包名)
             deps = meta.get("dependencies") or []
             if deps:
+                invalid = [d for d in deps if not _is_safe_dependency(d)]
+                if invalid:
+                    return {"ok": False, "error": f"存在不安全的依赖项,已拒绝安装: {invalid}"}
                 ok = await self._pip_install(deps)
                 if not ok:
                     return {"ok": False, "error": "依赖安装失败,插件目录已就绪可手动修复"}
@@ -98,3 +101,19 @@ def _safe_name(name: str) -> str:
     import re
 
     return re.sub(r"[^A-Za-z0-9_\-]", "_", name or "plugin")[:64]
+
+
+def _is_safe_dependency(dep: str) -> bool:
+    """校验 pip 依赖项格式:拒绝以 `-` 开头的选项注入,仅允许包名[版本约束]。
+
+    例:requests、requests>=2.0、requests==2.31.0、package[extra]<2 均合法;
+    `--index-url ...`、`-e git+...`、`requests; os.system(...)` 拒绝。
+    """
+    import re
+
+    if not isinstance(dep, str) or not dep or dep.startswith("-"):
+        return False
+    if any(c in dep for c in ";&|$`\n"):
+        return False
+    # 包名:字母数字._- 开头;允许 [extras];允许版本比较符(>=,<=,==,!=,~=,<,>)
+    return bool(re.fullmatch(r"[A-Za-z0-9_.\-]+(?:\[[A-Za-z0-9_,\-]+\])?(?:(?:>=|<=|==|!=|~=|<|>)[A-Za-z0-9.\-*]+)?", dep))

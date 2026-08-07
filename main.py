@@ -674,14 +674,22 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
     if bool(webhook_cfg.get("enabled", False)):
         from .adapter.webhook_server import WebhookServer
 
-        webhook_server = WebhookServer(
-            host=webhook_cfg.get("host", "127.0.0.1"),
-            port=int(webhook_cfg.get("port", 6196) or 6196),
-            path=webhook_cfg.get("path", "/webhook"),
-            token=str(webhook_cfg.get("token", "") or ""),
-        )
-        webhook_server.set_callback(pipeline.execute)
-        await webhook_server.start()
+        webhook_token = str(webhook_cfg.get("token", "") or "")
+        if not webhook_token:
+            # fail-closed:启用 webhook 必须配置强 token,否则拒绝启动(防身份冒充/事件注入)
+            logger.error(
+                "webhook.enabled=true 但未配置 token,已拒绝启动 webhook(安全策略)。"
+                "请设置 config.yaml 的 webhook.token。"
+            )
+        else:
+            webhook_server = WebhookServer(
+                host=webhook_cfg.get("host", "127.0.0.1"),
+                port=int(webhook_cfg.get("port", 6196) or 6196),
+                path=webhook_cfg.get("path", "/webhook"),
+                token=webhook_token,
+            )
+            webhook_server.set_callback(pipeline.execute)
+            await webhook_server.start()
 
     # I5 渐进式存储:SQLModel(可选,未装则跳过)
     sqlmodel_engine = None

@@ -82,6 +82,15 @@ DEFAULT_RULES: list[PermissionRule] = [
     PermissionRule("path", ".env", "deny"),
     PermissionRule("path", "secrets", "deny"),
     PermissionRule("path", "src/config.yaml", "deny"),
+    # 敏感文件读取命令直接拒绝(防 bash 绕过 path deny 读取 .env/config.yaml)
+    PermissionRule("command", "cat .env*", "deny"),
+    PermissionRule("command", "cat */.env*", "deny"),
+    PermissionRule("command", "more .env*", "deny"),
+    PermissionRule("command", "less .env*", "deny"),
+    PermissionRule("command", "head .env*", "deny"),
+    PermissionRule("command", "tail .env*", "deny"),
+    PermissionRule("command", "cat */config.yaml", "deny"),
+    PermissionRule("command", "printenv*", "deny"),
     # 危险命令直接拒绝
     PermissionRule("command", "rm -rf /*", "deny"),
     PermissionRule("command", "rm -rf ~", "deny"),
@@ -100,6 +109,13 @@ DEFAULT_RULES: list[PermissionRule] = [
     PermissionRule("command", "git push*", "ask"),
     PermissionRule("command", "pip install*", "ask"),
     PermissionRule("command", "npm install*", "ask"),
+    # 数据外传/探测工具需 ask(防把本机文件外发或扫描内网)
+    PermissionRule("command", "base64*", "ask"),
+    PermissionRule("command", "nc *", "ask"),
+    PermissionRule("command", "ncat *", "ask"),
+    PermissionRule("command", "telnet*", "ask"),
+    PermissionRule("command", "ssh *", "ask"),
+    PermissionRule("command", "scp *", "ask"),
 ]
 
 

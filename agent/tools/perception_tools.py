@@ -28,19 +28,32 @@ _MEDIA_EXT_BY_KIND = {
 _MEDIA_FALLBACK_EXT = {k: v[0] for k, v in _MEDIA_EXT_BY_KIND.items()}
 
 
-async def _resolve_media(path_or_url: str, kind: str) -> tuple[str, bool]:
+def _check_local_media_path(ctx: ToolContext, path: str) -> None:
+    """本地媒体路径安全校验:拒绝 .env/secrets 与不在可信目录的路径。
+
+    与 file_read 工具的 deny 规则对齐,防止 document_parse/media_analyze 绕过
+    `.env`/secrets 读取限制读取任意文件。
+    """
+    p = Path(path).resolve()
+    name = p.name.lower()
+    if name in (".env", ".env.local") or ".env" in p.parts or "secrets" in p.parts:
+        raise RuntimeError("该路径受保护,禁止读取(安全策略)")
+    if ctx.auth is not None and not ctx.auth.is_path_trusted(str(p)):
+        raise RuntimeError(f"文件不在可信目录内: {path}")
+
+
+async def _resolve_media(ctx: ToolContext, path_or_url: str, kind: str) -> tuple[str, bool]:
     """解析媒体为本地路径,返回 (路径, 是否为临时下载文件)。
 
-    URL 下载到临时文件(调用方负责 finally 清理);本地路径直接返回。
+    URL 经逐跳 SSRF 校验后下载(防重定向到内网);本地路径经信任检查后直接返回。
     """
     if not path_or_url:
         raise RuntimeError(f"未提供{kind}文件")
     if path_or_url.startswith(("http://", "https://")):
-        import httpx
+        from ...utils.net import safe_fetch_url
 
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-            resp = await client.get(path_or_url)
-            resp.raise_for_status()
+        resp = await safe_fetch_url(path_or_url, timeout=60)
+        resp.raise_for_status()
         suffix = Path(path_or_url).suffix.lower()
         allowed = _MEDIA_EXT_BY_KIND.get(kind, ())
         if suffix not in allowed:
@@ -50,6 +63,7 @@ async def _resolve_media(path_or_url: str, kind: str) -> tuple[str, bool]:
         await asyncio.to_thread(tmp.write_bytes, resp.content)
         return str(tmp), True
     if Path(path_or_url).is_file():
+        _check_local_media_path(ctx, path_or_url)
         return path_or_url, False
     raise RuntimeError(f"{kind}文件不存在: {path_or_url}")
 
@@ -81,7 +95,7 @@ class VisionAnalyzeTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path, is_temp = await _resolve_media(image, "image")
+            path, is_temp = await _resolve_media(ctx, image, "image")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -113,7 +127,7 @@ class OcrTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path, is_temp = await _resolve_media(image, "image")
+            path, is_temp = await _resolve_media(ctx, image, "image")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -142,7 +156,7 @@ class AudioTranscribeTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path, is_temp = await _resolve_media(audio, "audio")
+            path, is_temp = await _resolve_media(ctx, audio, "audio")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -171,7 +185,7 @@ class VideoSummarizeTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path, is_temp = await _resolve_media(video, "video")
+            path, is_temp = await _resolve_media(ctx, video, "video")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -199,7 +213,7 @@ class DocumentParseTool(Tool):
         if perception is None:
             return {"error": "感知模块未启用"}
         try:
-            path, is_temp = await _resolve_media(file, "document")
+            path, is_temp = await _resolve_media(ctx, file, "document")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
@@ -237,7 +251,7 @@ class MediaAnalyzeTool(Tool):
         if kind == "unknown" and file.startswith(("http://", "https://")):
             kind = "image"  # 无扩展名 URL 默认按图片处理
         try:
-            path, is_temp = await _resolve_media(file, kind if kind != "unknown" else "document")
+            path, is_temp = await _resolve_media(ctx, file, kind if kind != "unknown" else "document")
         except RuntimeError as exc:
             return {"error": str(exc)}
         try:
