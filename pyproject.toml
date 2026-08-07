@@ -88,12 +88,15 @@ packages = [
     # AstrBot Dashboard 兼容层(astrbot 命名空间)
     "astrbot", "astrbot.api", "astrbot.core", "astrbot.core.agent",
     "astrbot.core.backup", "astrbot.core.computer", "astrbot.core.config",
-    "astrbot.core.db", "astrbot.core.db.vec_db", "astrbot.core.db.vec_db.faiss_impl",
+    "astrbot.core.db", "astrbot.core.db.utils", "astrbot.core.db.vec_db",
+    "astrbot.core.db.vec_db.faiss_impl",
     "astrbot.core.knowledge_base", "astrbot.core.message", "astrbot.core.platform",
     "astrbot.core.platform.sources", "astrbot.core.platform.sources.dingtalk",
     "astrbot.core.platform.sources.lark", "astrbot.core.platform.sources.qqofficial",
+    "astrbot.core.platform.sources.webchat",
     "astrbot.core.platform.sources.weixin_oc", "astrbot.core.provider",
     "astrbot.core.skills", "astrbot.core.star", "astrbot.core.star.filter",
-    "astrbot.core.tools", "astrbot.dashboard", "astrbot.dashboard.api",
+    "astrbot.core.tools", "astrbot.core.utils", "astrbot.core.utils.t2i",
+    "astrbot.dashboard", "astrbot.dashboard.api",
     "astrbot.dashboard.services",
 ]

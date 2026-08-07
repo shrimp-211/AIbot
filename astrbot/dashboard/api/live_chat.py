@@ -4,7 +4,7 @@ from fastapi import APIRouter, WebSocket
 
 from astrbot.dashboard.services.live_chat_service import LiveChatService
 
-from .auth import authenticate_websocket
+from .auth import authenticate_websocket, ws_has_scope
 
 router = APIRouter(tags=["Live Chat"])
 legacy_router = APIRouter(
@@ -27,9 +27,13 @@ async def _run_live_chat_ws(
     if auth_ctx is None:
         await websocket.close(code=4401, reason="unauthorized")
         return
+    if not ws_has_scope(auth_ctx, "chat"):
+        await websocket.close(code=4403, reason="forbidden")
+        return
     await websocket.accept()
     service = get_service(websocket)
     await service.run_websocket_session(
+        username=auth_ctx.username,
         token=websocket.query_params.get("token"),
         force_ct=force_ct,
         receive_json=websocket.receive_json,

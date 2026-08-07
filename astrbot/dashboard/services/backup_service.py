@@ -121,13 +121,15 @@ class BackupService:
 
     async def rename_backup(self, data: dict) -> dict:
         filename = str(data.get("filename") or "")
-        new_name = str(data.get("new_name") or data.get("name") or "")
+        new_name = os.path.basename(str(data.get("new_name") or data.get("name") or "").strip())
         if not new_name:
             raise BackupServiceError("缺少新文件名")
         old = os.path.join(self.backup_dir, os.path.basename(filename))
         if not os.path.isfile(old):
             raise BackupServiceError("备份文件不存在")
-        new = os.path.join(self.backup_dir, os.path.basename(new_name) if new_name.endswith(".zip") else new_name + ".zip")
+        if not new_name.endswith(".zip"):
+            new_name = new_name + ".zip"
+        new = os.path.join(self.backup_dir, new_name)
         os.rename(old, new)
         return {"filename": os.path.basename(new)}
 
@@ -139,9 +141,18 @@ class BackupService:
     # ---------------- 上传/导入 ----------------
 
     async def upload_backup(self, file) -> dict:
-        raw = await file.read()
-        if len(raw) > 200 * 1024 * 1024:
-            raise BackupServiceError("备份文件过大(上限 200MB)")
+        max_size = 200 * 1024 * 1024
+        size = 0
+        chunks: list[bytes] = []
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_size:
+                raise BackupServiceError("备份文件过大(上限 200MB)")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
         fname = getattr(file, "filename", "") or f"backup_{int(time.time())}.zip"
         if not fname.endswith(".zip"):
             fname += ".zip"

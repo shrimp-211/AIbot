@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from astrbot.core import logger
@@ -77,10 +78,24 @@ class OpenApiService:
         post_data: dict,
         config_list: list[dict],
         allow_admin_username: bool = False,
+        caller_username: str | None = None,
     ) -> tuple[str, str, str | None]:
-        """解析有效用户名/会话/配置。返回 (username, session_id, config_id)。"""
-        username = str(post_data.get("user_id") or post_data.get("username") or "api_user")
-        session_id = str(post_data.get("session_id") or "default")
+        """解析有效用户名/会话/配置。返回 (username, session_id, config_id)。
+
+        非 ``chat:admin`` 的 API Key 强制绑定自身身份,不允许通过
+        ``post_data`` 声明任意 username/session_id(防跨用户冒充)。
+        """
+        caller = str(caller_username or "api_user")
+        if not allow_admin_username:
+            username = caller
+            # 会话仍由调用方指定,但以调用者身份为前缀,避免跨用户冲突
+            raw_session = str(post_data.get("session_id") or "default")
+            session_id = f"{caller}:{raw_session}"
+        else:
+            username = str(
+                post_data.get("user_id") or post_data.get("username") or caller
+            )
+            session_id = str(post_data.get("session_id") or "default")
         config_id = post_data.get("config_id")
         if config_id is None and config_list:
             config_id = config_list[0].get("config_id")
@@ -170,8 +185,6 @@ class OpenApiService:
                     await send_json({"type": "error", "data": "引擎未配置"})
                     continue
                 # 直接调用引擎(参考 ChatService)
-                import re
-
                 safe_user = "webui_" + re.sub(r"[^A-Za-z0-9_\-]", "_", username)[:32]
                 from src.adapter.event import AgentEvent
                 from src.adapter.message import MessageChain, MessageSegment

@@ -102,6 +102,13 @@ class ChatService:
         }
 
     async def new_session(self, username: str, platform_id: str = "webchat") -> dict:
+        # 限制每用户会话数(防内存无限增长)
+        user_keys = [k for k in self._sessions if k[0] == username]
+        if len(user_keys) >= 100:
+            oldest_key = min(
+                user_keys, key=lambda k: self._sessions[k].get("order", 0)
+            )
+            self._sessions.pop(oldest_key, None)
         sid = str(uuid.uuid4())
         now = time.time()
         self._order += 1
@@ -241,9 +248,18 @@ class ChatService:
     # ================= 文件 =================
 
     async def save_uploaded_file(self, file) -> dict:
-        raw = await file.read()
-        if len(raw) > 100 * 1024 * 1024:
-            raise ChatServiceError("文件过大(上限 100MB)")
+        max_size = 100 * 1024 * 1024
+        size = 0
+        chunks: list[bytes] = []
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_size:
+                raise ChatServiceError("文件过大(上限 100MB)")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
         fname = getattr(file, "filename", "untitled") or "untitled"
         safe = re.sub(r"[^A-Za-z0-9._\-一-鿿]", "_", fname)
         tmp_dir = os.path.join(get_astrbot_temp_path(), "webchat")

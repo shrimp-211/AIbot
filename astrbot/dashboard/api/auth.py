@@ -529,6 +529,12 @@ async def dashboard_update_account(
     return await _update_account(request, payload, service)
 
 
+def ws_has_scope(ctx: AuthContext, scope: str) -> bool:
+    """检查 WebSocket 认证上下文是否具备指定 scope。"""
+    scopes = list(getattr(ctx, "scopes", None) or [])
+    return "*" in scopes or scope in scopes
+
+
 async def authenticate_websocket(websocket) -> tuple[AuthContext | None, str | None]:
     """WebSocket 认证:验证 API Key 或 JWT。
 

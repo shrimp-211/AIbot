@@ -99,6 +99,7 @@ async def _open_api_chat_response(
             post_data,
             _get_chat_config_list(open_api_service),
             allow_admin_username=allow_admin_username,
+            caller_username=auth.username,
         )
     except OpenApiServiceError as exc:
         return _open_api_error(str(exc))
@@ -276,11 +277,14 @@ async def get_open_api_file(
 
 @router.websocket("/chat/ws")
 async def chat_ws(websocket: WebSocket) -> None:
-    from .auth import authenticate_websocket
+    from .auth import authenticate_websocket, ws_has_scope
 
     auth_ctx, raw_key = await authenticate_websocket(websocket)
     if auth_ctx is None:
         await websocket.close(code=4401, reason="unauthorized")
+        return
+    if not ws_has_scope(auth_ctx, "chat"):
+        await websocket.close(code=4403, reason="forbidden")
         return
     await websocket.accept()
     service: OpenApiService = websocket.app.state.services.open_api

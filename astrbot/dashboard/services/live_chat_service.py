@@ -36,13 +36,15 @@ class LiveChatService:
 
     async def run_websocket_session(
         self,
-        token: str | None,
-        force_ct: str | None,
-        receive_json,
-        send_json,
-        close,
+        username: str | None = None,
+        token: str | None = None,
+        force_ct: str | None = None,
+        receive_json=None,
+        send_json=None,
+        close=None,
     ) -> None:
         """运行一个 WebSocket 聊天会话。"""
+        self._ws_username = username or "anonymous"
         try:
             await send_json({"type": "session_ready", "session_id": "live"})
         except Exception:
@@ -64,7 +66,12 @@ class LiveChatService:
                     raw = msg.get("audio") or msg.get("data") or ""
                     if raw:
                         try:
-                            audio_buffer.append(base64.b64decode(raw))
+                            chunk = base64.b64decode(raw)
+                            if sum(len(c) for c in audio_buffer) + len(chunk) > 50 * 1024 * 1024:
+                                audio_buffer.clear()
+                                await send_json({"type": "error", "data": "音频数据过大(上限 50MB)"})
+                                continue
+                            audio_buffer.append(chunk)
                         except Exception:
                             pass
                     continue
@@ -112,7 +119,9 @@ class LiveChatService:
         queue: asyncio.Queue = asyncio.Queue()
 
         def _make_event():
-            safe_user = "webui_live"
+            safe_user = "webui_" + re.sub(
+                r"[^A-Za-z0-9_\-]", "_", str(getattr(self, "_ws_username", "anonymous"))
+            )[:32]
             from src.adapter.event import AgentEvent
             from src.adapter.message import MessageChain, MessageSegment
 
@@ -160,11 +169,15 @@ class LiveChatService:
                 try:
                     await send_json({"type": "plain", "data": data, "streaming": True})
                 except Exception:
+                    if not task.done():
+                        task.cancel()
                     break
             elif kind == "reasoning":
                 try:
                     await send_json({"type": "plain", "chain_type": "reasoning", "data": data})
                 except Exception:
+                    if not task.done():
+                        task.cancel()
                     break
         reply = final_reply or "".join(parts)
         return reply

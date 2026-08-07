@@ -129,7 +129,9 @@ class SkillsService:
 
     async def upload_skill(self, file) -> SkillsOperationResult:
         raw = await file.read()
-        fname = getattr(file, "filename", "") or "SKILL.md"
+        if len(raw) > 5 * 1024 * 1024:
+            raise SkillsServiceError("技能文件过大(上限 5MB)")
+        fname = os.path.basename(getattr(file, "filename", "") or "SKILL.md")
         if fname.endswith(".zip"):
             return await self._upload_zip(raw)
         if not fname.endswith(".md"):
@@ -258,8 +260,8 @@ class SkillsService:
         return SkillsOperationResult(ok=True, data={"name": skill_name, "path": target, "content": content})
 
     async def update_skill_file(self, data: dict) -> SkillsOperationResult:
-        name = str(data.get("name") or "").strip()
-        path = str(data.get("path") or "").strip() or "SKILL.md"
+        name = os.path.basename(str(data.get("name") or "").strip())
+        path = os.path.basename(str(data.get("path") or "").strip() or "SKILL.md")
         content = data.get("content") or ""
         base = self._skill_file(name)
         if base is None:
