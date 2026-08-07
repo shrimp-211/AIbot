@@ -27,6 +27,7 @@ class PersonaManager:
         self._file_personas: dict[str, dict] = {}
         # session_id -> {"persona": persona_id, "ts": 切换时间}
         self._session_personas: dict[str, dict] = {}
+        self._begin_dialogs_shown: set[str] = set()  # 已展示过 begin_dialogs 的会话
         self._access_count = 0
         if self._personas_dir is not None:
             self.reload_files()
@@ -126,10 +127,13 @@ class PersonaManager:
     def switch(self, session_id: str, persona_id: str | None) -> dict:
         if persona_id is None:
             self._session_personas.pop(session_id, None)
+            self._begin_dialogs_shown.discard(session_id)
             return {"ok": True, "message": "已恢复默认人格"}
         if self.get(persona_id) is None:
             return {"error": f"人格不存在: {persona_id}"}
         self._session_personas[session_id] = {"persona": persona_id, "ts": time.time()}
+        # 切换后重置 begin_dialogs 展示标记,下轮注入示例对话(参照 AstrBot)
+        self._begin_dialogs_shown.discard(session_id)
         p = self.get(persona_id)
         return {"ok": True, "message": f"已切换到人格: {p.get('name', persona_id)}"}
 
@@ -152,6 +156,25 @@ class PersonaManager:
             if p and p.get("system_prompt"):
                 return p["system_prompt"]
         return self._default_prompt
+
+    def get_begin_dialogs(self, session_id: str) -> list[dict] | None:
+        """返回激活人格的 begin_dialogs 示例对话(仅切换后首次返回,参照 AstrBot)。
+
+        引擎在首轮把这些示例对话注入消息历史,展示人格的语言风格。
+        """
+        if session_id in self._begin_dialogs_shown:
+            return None
+        entry = self._session_personas.get(session_id)
+        pid = entry.get("persona") if entry else None
+        if not pid:
+            return None
+        p = self.get(pid)
+        dialogs = (p or {}).get("begin_dialogs") or []
+        if not dialogs:
+            self._begin_dialogs_shown.add(session_id)
+            return None
+        self._begin_dialogs_shown.add(session_id)
+        return list(dialogs)
 
     def get_tool_allowlist(self, session_id: str) -> list[str] | None:
         self._maybe_prune()

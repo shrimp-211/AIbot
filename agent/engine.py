@@ -549,6 +549,13 @@ class AgentEngine:
     def _build_messages(self, event: AgentEvent, text: str) -> list[dict]:
         session_id = event.session_id
         messages: list[dict] = []
+        # 人格 begin_dialogs(参照 AstrBot):切换人格后首轮注入示例对话展示语言风格
+        if self.persona_manager is not None:
+            dialogs = self.persona_manager.get_begin_dialogs(session_id)
+            if dialogs:
+                for d in dialogs:
+                    if isinstance(d, dict) and d.get("role") and d.get("content"):
+                        messages.append({"role": d["role"], "content": d["content"]})
         # FTS5 检索的相关历史(跨会话)
         hits = event.state.get("memory_hits")
         if hits:
