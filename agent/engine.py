@@ -621,6 +621,9 @@ class AgentEngine:
         last_tool_args: dict | None = None
         same_tool_streak = 0
         thinking_sent = False
+        # 空输出重试计数(参照 AstrBot tool_loop_agent_runner):LLM 无内容且无工具调用时指数退避重试
+        empty_retries = 0
+        _EMPTY_OUTPUT_MAX_RETRIES = 3
         for _ in range(max_iterations):
             if not thinking_sent:
                 # 进入处理即提示"思考中"(仅私聊/WebUI,只发一次避免刷屏)
@@ -654,7 +657,28 @@ class AgentEngine:
             tool_calls = result.get("tool_calls") or []
 
             if not tool_calls:
-                return content if content else "完成。"
+                if content:
+                    return content
+                # 空输出重试(参照 AstrBot):无内容且无工具调用,指数退避重试,避免"完成。"死胡同
+                if empty_retries >= _EMPTY_OUTPUT_MAX_RETRIES:
+                    return "抱歉,我没能生成有效回复,请换一种问法试试。"
+                empty_retries += 1
+                logger.warning("LLM 返回空输出(无内容无工具调用),{}s 后重试({}/{})",
+                               2 ** empty_retries, empty_retries, _EMPTY_OUTPUT_MAX_RETRIES)
+                await asyncio.sleep(2 ** empty_retries)
+                continue
+
+            empty_retries = 0  # 拿到有效响应,重置重试计数
+            # follow-up 通知(参照 AstrBot FOLLOW_UP_NOTICE_TEMPLATE):工具执行期间收到的新消息
+            followup_notice = ""
+            if self.followup is not None:
+                pending = self.followup.drain(ctx.event.session_id)
+                if pending:
+                    lines = "\n".join(f"{i}. {m}" for i, m in enumerate(pending, 1))
+                    followup_notice = (
+                        "\n\n[SYSTEM NOTICE] 工具执行期间用户发来了新消息,"
+                        f"请在后续回复中优先处理这些新指令:\n{lines}"
+                    )
 
             messages.append(
                 {
@@ -703,6 +727,7 @@ class AgentEngine:
             # 否则任一个 ask_user/审批挂起提前 return,会丢弃其余并行调用的结果,
             # 下一轮历史变成"assistant 声明 N 个 tool_calls 却只有 <N 个 tool 结果",各 provider 均拒绝。
             any_awaiting = False
+            followup_injected = False
             for tc, output in zip(tool_calls, outputs):
                 if self._tool_awaiting(output):
                     any_awaiting = True
@@ -710,6 +735,9 @@ class AgentEngine:
                         {"role": "tool", "tool_call_id": tc["id"], "content": output}
                     )
                     continue
+                if followup_notice and not followup_injected:
+                    output = output + followup_notice
+                    followup_injected = True
                 # 重复工具调用检测:连续相同(名+参数)达到阈值时注入分级指导
                 name = tc.get("name", "")
                 args = tc.get("arguments") or {}
@@ -731,7 +759,44 @@ class AgentEngine:
                 # 等待用户回复后再继续(下一轮进入审批续接)
                 return None
 
-        return "任务步骤较多,已完成主要部分。如需继续处理,请告诉我下一步。"
+        # 达到最大迭代次数(参照 AstrBot MAX_STEPS_REACHED_PROMPT):注入"停止调用工具并总结"提示,
+        # 移除工具(强制直接回复),再执行最后一步,避免循环戛然而止。
+        logger.warning("Agent 达到最大迭代次数({}),注入总结提示", max_iterations)
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "已达到最大工具调用次数。请停止调用任何工具,"
+                    "基于已获得的信息总结任务进展与结论,直接回复用户。"
+                ),
+            }
+        )
+        result = await self.provider.chat(messages, system_prompt=system_prompt, tools=None)
+        self.usage.record(result.get("usage"), user_id=ctx.event.user_id, model=self.model_name)
+        content = (result.get("content") or "").strip()
+        return content if content else "已达到最大工具调用次数,任务完成。"
+
+    def _filter_tool_args(self, name: str, args: dict) -> dict:
+        """过滤工具参数:只保留工具 schema 声明接受的参数(参照 AstrBot valid_params)。
+
+        忽略多余参数并记日志,防止 LLM 误传未声明参数导致工具 TypeError。
+        """
+        if not args:
+            return args
+        try:
+            schema = next((s for s in self.tools.schemas() if s.get("name") == name), None)
+            if not schema:
+                return args
+            props = schema.get("parameters", {}).get("properties", {})
+            if not props:
+                return args
+            extra = set(args) - set(props)
+            if extra:
+                logger.warning("工具 {} 忽略非期望参数: {}", name, sorted(extra))
+                return {k: v for k, v in args.items() if k in props}
+        except Exception:  # noqa: BLE001
+            pass
+        return args
 
     @staticmethod
     def _tool_awaiting(output: str) -> bool:
@@ -749,6 +814,8 @@ class AgentEngine:
         args = tool_call.get("arguments", {}) or {}
         if not isinstance(args, dict):
             args = {}
+        # 参数过滤(参照 AstrBot valid_params):只传工具声明接受的参数,忽略多余参数防 TypeError
+        args = self._filter_tool_args(name, args)
         role_level = self.auth.get_role_level(ctx.event.user_id, ctx.event.group_id)
 
         if self.hooks:
