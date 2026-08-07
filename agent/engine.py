@@ -642,7 +642,8 @@ class AgentEngine:
                     await self.hooks.trigger("pre_compaction", messages=len(messages))
                 logger.info("触发上下文压缩(ReAct 循环内)")
                 messages = await compress_messages(
-                    self.provider, messages, max_context, keep_recent=6
+                    self.provider, messages, max_context,
+                    keep_recent_ratio=float(self.config.get("agent.keep_recent_ratio", 0.15) or 0.15),
                 )
                 if should_compress(messages, max_context):
                     # 摘要后仍超限:减半兜底(参照 AstrBot ContextManager 末级检查)

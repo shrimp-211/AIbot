@@ -569,10 +569,11 @@ async def test_compress_ensure_user():
     )
     msgs.append({"role": "tool", "tool_call_id": "1", "content": "ok"})
     out = await compress_messages(
-        _SummaryProvider(), msgs, max_tokens=50, keep_recent=2
+        _SummaryProvider(), msgs, max_tokens=50, keep_recent_ratio=0.3
     )
-    assert out[0]["role"] == "system", out
-    assert out[1]["role"] == "user", out  # system 后紧跟 user
+    # 摘要以 user/assistant 对注入(参照 AstrBot LLMSummaryCompressor)
+    assert out[0]["role"] == "user" and "摘要" in out[0]["content"], out
+    assert out[1]["role"] == "assistant", out  # 摘要确认
     assert any(m.get("role") == "tool" for m in out), out  # tool 配对保留
 
 
