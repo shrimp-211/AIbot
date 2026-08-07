@@ -30,3 +30,6 @@ Thumbs.db
 
 # git 内部 SSH key(仅本机使用,不推送)
 .git/ssh/
+
+# 测试环境(独立副本,不提交)
+test_env/
