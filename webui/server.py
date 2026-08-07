@@ -821,6 +821,13 @@ class WebUIServer:
                     # event.reply 通道同时承载进度提示(思考中/工具执行),标记为 progress 便于前端区分
                     await ws.send_str(json.dumps({"role": "progress", "text": _text}))
 
+            async def _stream(_content: str, _reasoning: str) -> None:
+                # LLM 流式 delta:WebUI 逐 token 展示
+                if _content and not ws.closed:
+                    await ws.send_str(json.dumps({"role": "stream", "text": _content}))
+
+            event._stream_callback = _stream
+
             event._send_callback = _cb
             try:
                 reply = await engine.process(event)

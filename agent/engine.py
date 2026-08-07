@@ -491,6 +491,13 @@ class AgentEngine:
             guidance.append("- 群聊回复保持简短(通常 2-3 行),多人语境下点明你回应的是谁。")
         else:
             guidance.append("- 私聊可以更详细,一次说清要点。")
+        if event.platform == "qq":
+            # QQ 分段发送引导(参照流式体验):自然分点/分段便于逐条发送。
+            # 优化:不过度切碎(避免一句一行),相关要点聚合到同一段,代码块/列表保持完整。
+            guidance.append(
+                "- QQ 回复建议自然分点或分段表达(每个要点独立一行或一段),"
+                "便于逐条发送呈现流式效果;但避免过度切碎,相关内容应聚合,代码块与列表保持完整。"
+            )
         return "\n".join(guidance)
 
     def _build_system_prompt(self, event: AgentEvent) -> str:
@@ -616,6 +623,19 @@ class AgentEngine:
         except Exception:  # noqa: BLE001
             logger.exception("发送进度指示失败")
 
+    async def _emit_stream(self, ctx: ToolContext, content: str, reasoning: str) -> None:
+        """把 LLM 流式 delta 推给客户端(WebUI 经 event._stream_callback)。
+
+        content=文本增量;reasoning=思考增量。无回调(QQ/普通会话)时静默忽略。
+        """
+        cb = getattr(ctx.event, "_stream_callback", None)
+        if cb is None:
+            return
+        try:
+            await cb(content, reasoning)
+        except Exception:  # noqa: BLE001
+            logger.debug("流式 delta 推送失败")
+
     async def _run_react_loop(self, ctx: ToolContext, messages: list[dict], system_prompt: str) -> str:
         schemas = self._filtered_schemas(ctx.event.session_id)
         max_iterations = int(self.config.get("agent.max_iterations", 8) or 8)
@@ -653,7 +673,20 @@ class AgentEngine:
                     await self.hooks.trigger("post_compaction", messages=len(messages))
             if self.hooks:
                 await self.hooks.trigger("pre_llm_request", messages=len(messages), tools=len(schemas))
-            result = await self.provider.chat(messages, system_prompt=system_prompt, tools=schemas)
+            # 流式调用(参照 Claude Code/AstrBot 流式):逐 delta 经事件回调推给客户端
+            result: dict[str, Any] = {}
+            async for delta in self.provider.chat_stream(
+                messages, system_prompt=system_prompt, tools=schemas
+            ):
+                if delta.get("type") == "delta":
+                    await self._emit_stream(
+                        ctx, delta.get("content") or "", delta.get("reasoning") or ""
+                    )
+                elif delta.get("type") == "done":
+                    result = delta
+                    break
+            if not result:
+                result = {"content": "", "tool_calls": [], "usage": {}, "thinking": ""}
             if self.hooks:
                 await self.hooks.trigger("post_llm_response", content=result.get("content", "")[:200])
             # 记录 LLM 实际输入 token 作为可信用量(供下轮压缩判断,参照 AstrBot trusted_token_usage)
@@ -661,7 +694,7 @@ class AgentEngine:
             trusted_tokens = int(_usage.get("prompt_tokens", 0) or 0)
             # 记录 token 用量与估算成本(usage 缺失如 mock 时自动跳过)
             self.usage.record(
-                result.get("usage"),
+                _usage,
                 user_id=ctx.event.user_id,
                 model=self.model_name,
             )

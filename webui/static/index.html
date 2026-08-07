@@ -473,10 +473,29 @@ let chatWs = null;
 function connectChat() {
   if (chatWs && chatWs.readyState <= 1) return;
   chatWs = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/chat', ['chat', 'auth.' + token]);
+  let streamBubble = null;
   chatWs.onmessage = e => {
     const d = JSON.parse(e.data);
-    if (d.role === 'progress') addChat('progress', d.text);
-    else addChat('assistant', d.text);
+    if (d.role === 'progress') { addChat('progress', d.text); return; }
+    if (d.role === 'stream') {
+      // 流式 delta:追加到当前流式气泡(无则新建)
+      if (!streamBubble || !document.body.contains(streamBubble)) {
+        streamBubble = document.createElement('div');
+        streamBubble.className = 'msg assistant streaming';
+        streamBubble.innerHTML = `<b>AI:</b> <span></span>`;
+        $('chat').appendChild(streamBubble);
+      }
+      streamBubble.querySelector('span').textContent += d.text;
+      $('chat').scrollTop = $('chat').scrollHeight;
+      return;
+    }
+    // 最终回复:若有进行中的流式气泡则定稿(替换文本),否则新建
+    if (streamBubble && document.body.contains(streamBubble)) {
+      streamBubble.querySelector('span').textContent = d.text;
+      streamBubble = null;
+    } else {
+      addChat('assistant', d.text);
+    }
   };
   chatWs.onclose = () => { chatWs = null; };
 }

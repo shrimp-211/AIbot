@@ -160,6 +160,27 @@ class BaseProvider(ABC):
         """连通性测试。"""
         raise NotImplementedError
 
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ):
+        """流式调用,产出 delta 块直至 done 块。
+
+        delta 块: {"type":"delta","content":str,"reasoning":str}
+        done 块:  {"type":"done","content","tool_calls","thinking","usage",...}(与 chat() 结构一致)
+
+        默认实现回退为一次性 chat()(无真流式能力的 provider 仍可被上层以统一方式消费)。
+        """
+        result = await self.chat(messages, system_prompt=system_prompt, tools=tools, **kwargs)
+        content = result.get("content") or ""
+        reasoning = result.get("thinking") or ""
+        if content or reasoning:
+            yield {"type": "delta", "content": content, "reasoning": reasoning}
+        yield {"type": "done", **result}
+
 
 def create_provider(config: dict[str, Any]) -> BaseProvider:
     """按 type 创建 provider 实例。

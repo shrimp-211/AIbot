@@ -98,6 +98,88 @@ class OpenAICompatibleProvider(BaseProvider):
             else {},
         }
 
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ):
+        """OpenAI 兼容真流式:逐 delta 产出 content/reasoning,工具调用增量聚合。"""
+        msgs: list[dict] = []
+        if system_prompt:
+            msgs.append({"role": "system", "content": system_prompt})
+        msgs.extend(messages)
+        params: dict[str, Any] = dict(
+            model=self.model,
+            messages=msgs,
+            max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            stream=True,
+        )
+        if self.reasoning_effort:
+            params["reasoning_effort"] = kwargs.get("reasoning_effort", self.reasoning_effort)
+        else:
+            params["temperature"] = kwargs.get("temperature", self.temperature)
+        if tools:
+            params["tools"] = [{"type": "function", "function": t} for t in tools]
+
+        stream = await self._with_retry(
+            lambda: self._client.chat.completions.create(**params)
+        )
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_calls: dict[int, dict[str, str]] = {}
+        usage = None
+        async for chunk in stream:
+            if getattr(chunk, "usage", None):
+                usage = chunk.usage
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta is None:
+                continue
+            content = getattr(delta, "content", None)
+            if content:
+                content_parts.append(content)
+                yield {"type": "delta", "content": content, "reasoning": ""}
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                reasoning_parts.append(reasoning)
+                yield {"type": "delta", "content": "", "reasoning": reasoning}
+            if getattr(delta, "tool_calls", None):
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    entry = tool_calls.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                    if tc.id:
+                        entry["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name:
+                            entry["name"] += tc.function.name
+                        if tc.function.arguments:
+                            entry["arguments"] += tc.function.arguments
+
+        result: dict[str, Any] = {
+            "content": "".join(content_parts),
+            "tool_calls": [],
+            "thinking": "\n".join(reasoning_parts),
+        }
+        if tool_calls:
+            tcs = []
+            for idx in sorted(tool_calls):
+                entry = tool_calls[idx]
+                try:
+                    arguments = json.loads(entry["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    arguments = {}
+                tcs.append({"id": entry["id"], "name": entry["name"], "arguments": arguments})
+            result["tool_calls"] = tcs
+        if usage is not None:
+            result["usage"] = {
+                "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            }
+        yield {"type": "done", **result}
+
     async def test(self) -> bool:
         try:
             await self._client.models.list()

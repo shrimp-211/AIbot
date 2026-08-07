@@ -161,6 +161,88 @@ class AnthropicProvider(BaseProvider):
             else {},
         }
 
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ):
+        """Anthropic 真流式:thinking + text 逐 delta,工具调用从最终消息提取。"""
+        client = self._get_client()
+        anthropic_messages: list[dict] = []
+        for m in messages:
+            role = m["role"]
+            content = m.get("content", "")
+            if role == "tool":
+                anthropic_messages.append(
+                    {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": m.get("tool_call_id", ""), "content": str(content)}
+                    ]}
+                )
+            elif role == "assistant" and m.get("tool_calls"):
+                blocks = []
+                if content:
+                    blocks.append({"type": "text", "text": content})
+                for tc in m["tool_calls"]:
+                    blocks.append({"type": "tool_use", "id": tc.get("id", ""), "name": tc.get("name", ""), "input": tc.get("arguments", {})})
+                anthropic_messages.append({"role": "assistant", "content": blocks})
+            else:
+                anthropic_messages.append({"role": role, "content": content})
+
+        params: dict[str, Any] = dict(
+            model=self.model,
+            messages=anthropic_messages,
+            max_tokens=kwargs.get("max_tokens", self.max_tokens),
+        )
+        if self.thinking_enabled:
+            if params["max_tokens"] > 1024:
+                budget = min(self.thinking_budget, params["max_tokens"] - 1)
+                params["thinking"] = {"type": "enabled", "budget_tokens": max(1024, budget)}
+        else:
+            params["temperature"] = kwargs.get("temperature", self.temperature)
+        if system_prompt:
+            params["system"] = system_prompt
+        if tools:
+            params["tools"] = [self._convert_tool(t) for t in tools]
+
+        thinking_parts: list[str] = []
+        async with client.messages.stream(**params) as stream:
+            # thinking 流(版本兼容:不存在的属性跳过)
+            ts = getattr(stream, "thinking_stream", None)
+            if ts is not None:
+                try:
+                    async for t in ts:
+                        thinking_parts.append(t)
+                        yield {"type": "delta", "content": "", "reasoning": t}
+                except Exception:  # noqa: BLE001
+                    pass
+            async for text in stream.text_stream:
+                yield {"type": "delta", "content": text, "reasoning": ""}
+
+        final = await stream.get_final_message()
+        content_parts: list[str] = []
+        tool_calls: list[dict] = []
+        for block in final.content:
+            if block.type == "text":
+                content_parts.append(block.text)
+            elif block.type == "thinking":
+                thinking_parts.append(block.thinking)
+            elif block.type == "tool_use":
+                tool_calls.append({"id": block.id, "name": block.name, "arguments": block.input or {}})
+        usage = getattr(final, "usage", None)
+        result: dict[str, Any] = {
+            "content": "".join(content_parts),
+            "tool_calls": tool_calls,
+            "thinking": "\n".join(thinking_parts),
+        }
+        if usage is not None:
+            result["usage"] = {
+                "prompt_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                "completion_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+            }
+        yield {"type": "done", **result}
+
     async def test(self) -> bool:
         try:
             await self._get_client().messages.create(

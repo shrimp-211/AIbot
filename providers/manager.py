@@ -88,6 +88,47 @@ class ProviderManager(BaseProvider):
                 raise last_exc
             raise RuntimeError("无可用 LLM provider")
 
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        system_prompt: str | None = None,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ):
+        """流式委托:从主 provider 开始,失败切换到备用(与 chat() 一致的 fallback 链)。"""
+        async with self._lock:
+            now = time.monotonic()
+            candidates = [
+                i for i in range(len(self._chain))
+                if self._cooldowns.get(i, 0) <= now or len(self._chain) <= 1
+            ]
+            if not candidates:
+                candidates = list(range(len(self._chain)))
+            last_exc: Exception | None = None
+            for i in candidates:
+                provider = self._chain[i]
+                try:
+                    async for delta in provider.chat_stream(
+                        messages, system_prompt=system_prompt, tools=tools, **kwargs
+                    ):
+                        yield delta
+                    self._active = provider
+                    self._cooldowns.pop(i, None)
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    self._cooldowns[i] = now + self._cooldown_secs
+                    logger.warning(
+                        "Provider {} 流式调用失败,{}s 内不再尝试: {}",
+                        type(provider).__name__, self._cooldown_secs, exc,
+                    )
+            yield {
+                "type": "done", "content": "", "tool_calls": [],
+                "error": str(last_exc) if last_exc else "无可用 LLM provider",
+            }
+
     async def test(self) -> bool:
         for provider in self._chain:
             try:
