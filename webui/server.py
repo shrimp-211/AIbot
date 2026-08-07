@@ -310,16 +310,16 @@ class WebUIServer:
         if not self._check_auth(request):
             return web.json_response({"ok": False, "error": "未授权"}, status=401)
         engine = self._deps.get("engine")
-        servers = (
-            engine.mcp_manager.list_status() if engine and engine.mcp_manager else []
-        )
+        mcp = getattr(engine, "mcp_manager", None)
+        servers = mcp.list_status() if mcp else []
         return web.json_response({"ok": True, "servers": servers})
 
     async def _skills(self, request: web.Request) -> web.Response:
         if not self._check_auth(request):
             return web.json_response({"ok": False, "error": "未授权"}, status=401)
         engine = self._deps.get("engine")
-        skills = engine.skills.all() if engine and engine.skills else []
+        skills = getattr(engine, "skills", None)
+        skills = skills.all() if skills else []
         return web.json_response(
             {
                 "ok": True,
@@ -345,7 +345,7 @@ class WebUIServer:
         if not self._check_auth(request):
             return web.json_response({"ok": False, "error": "未授权"}, status=401)
         engine = self._deps.get("engine")
-        mgr = engine.subagent_manager if engine else None
+        mgr = getattr(engine, "subagent_manager", None) if engine else None
         running = mgr.running() if mgr else []
         results = mgr._results if mgr else {}
         history = mgr.recent(20) if mgr else []
