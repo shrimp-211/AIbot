@@ -1,9 +1,9 @@
 name: CI
 
+# 已取消自动触发(不再随 push/PR 运行),仅保留手动触发:
+# 需要时在 GitHub Actions 页点击 "Run workflow"。
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
