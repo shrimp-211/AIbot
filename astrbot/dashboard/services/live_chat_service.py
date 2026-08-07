@@ -140,15 +140,21 @@ class LiveChatService:
 
         async def _run() -> str:
             try:
-                return await self.engine.process(event) or ""
+                reply = await self.engine.process(event) or ""
             except Exception as exc:  # noqa: BLE001
                 logger.error("Live Chat 引擎错误: %s", exc, exc_info=True)
-                return "处理出错,请查看服务端日志。"
+                reply = "处理出错,请查看服务端日志。"
+            queue.put_nowait(("__final__", reply))
+            return reply
 
         task = asyncio.create_task(_run())
         parts: list[str] = []
+        final_reply = ""
         while True:
             kind, data = await queue.get()
+            if kind == "__final__":
+                final_reply = data or ""
+                break
             if kind == "plain":
                 parts.append(data)
                 try:
@@ -160,10 +166,8 @@ class LiveChatService:
                     await send_json({"type": "plain", "chain_type": "reasoning", "data": data})
                 except Exception:
                     break
-            if task.done() and queue.empty():
-                break
-        reply = await task
-        return reply or "".join(parts)
+        reply = final_reply or "".join(parts)
+        return reply
 
     # ================= 语音聊天 =================
 

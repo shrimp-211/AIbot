@@ -242,6 +242,8 @@ class ChatService:
 
     async def save_uploaded_file(self, file) -> dict:
         raw = await file.read()
+        if len(raw) > 100 * 1024 * 1024:
+            raise ChatServiceError("文件过大(上限 100MB)")
         fname = getattr(file, "filename", "untitled") or "untitled"
         safe = re.sub(r"[^A-Za-z0-9._\-一-鿿]", "_", fname)
         tmp_dir = os.path.join(get_astrbot_temp_path(), "webchat")

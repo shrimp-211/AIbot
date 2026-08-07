@@ -276,6 +276,12 @@ async def get_open_api_file(
 
 @router.websocket("/chat/ws")
 async def chat_ws(websocket: WebSocket) -> None:
+    from .auth import authenticate_websocket
+
+    auth_ctx, raw_key = await authenticate_websocket(websocket)
+    if auth_ctx is None:
+        await websocket.close(code=4401, reason="unauthorized")
+        return
     await websocket.accept()
     service: OpenApiService = websocket.app.state.services.open_api
     chat_service: ChatService = websocket.app.state.services.chat
@@ -284,7 +290,8 @@ async def chat_ws(websocket: WebSocket) -> None:
         await websocket.close(code=code, reason=reason)
 
     await service.run_chat_websocket(
-        raw_api_key=_extract_ws_api_key(websocket),
+        raw_api_key=raw_key,
+        username=auth_ctx.username,
         receive_json=websocket.receive_json,
         send_json=websocket.send_json,
         close=close_ws,

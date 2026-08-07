@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 
 from astrbot.core import logger
 from astrbot.dashboard.async_utils import run_maybe_async
-from astrbot.dashboard.responses import error, ok
+from astrbot.dashboard.responses import ApiError, error, ok
 from astrbot.dashboard.schemas import (
     BackupImportRequest,
     BackupRenameRequest,
@@ -33,6 +33,31 @@ def get_service(request: Request) -> BackupService:
 
 async def require_system_scope(request: Request) -> AuthContext:
     return await require_scope(request, "system")
+
+
+async def require_download_auth(request: Request) -> AuthContext:
+    """备份下载认证:接受 Authorization Bearer / ?token= / cookie JWT。"""
+    import jwt as _jwt
+
+    token = (request.query_params.get("token") or "").strip()
+    if not token:
+        auth_header = request.headers.get("Authorization", "").strip()
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+    if not token:
+        token = request.cookies.get("astrbot_dashboard_jwt", "")
+    if not token:
+        raise ApiError("未授权", status_code=401)
+    try:
+        payload = _jwt.decode(token, request.app.state.jwt_secret, algorithms=["HS256"])
+        username = payload.get("username")
+        if not isinstance(username, str) or not username.strip():
+            raise ApiError("Token 无效", status_code=401)
+        return AuthContext(username=username, scopes=["*"], via="jwt")
+    except _jwt.ExpiredSignatureError as exc:
+        raise ApiError("Token 过期", status_code=401) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ApiError("Token 无效", status_code=401) from exc
 
 
 def _model_dict(payload) -> dict:
@@ -296,14 +321,10 @@ async def get_dashboard_backup_progress(
 async def download_backup(
     filename: str,
     request: Request,
+    _auth: AuthContext = Depends(require_download_auth),
     token: str | None = Query(default=None),
     service: BackupService = Depends(get_service),
 ):
-    if not token:
-        auth_header = request.headers.get("Authorization", "").strip()
-        scheme, separator, credentials = auth_header.partition(" ")
-        if separator and scheme.lower() == "bearer":
-            token = credentials.strip() or None
     return _download_backup(filename=filename, token=token, service=service)
 
 
@@ -311,6 +332,7 @@ async def download_backup(
 async def download_dashboard_backup(
     filename: str | None = Query(default=None),
     token: str | None = Query(default=None),
+    _auth: AuthContext = Depends(require_download_auth),
     service: BackupService = Depends(get_service),
 ):
     return _download_backup(filename=filename, token=token, service=service)

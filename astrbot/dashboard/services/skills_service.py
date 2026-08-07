@@ -52,6 +52,10 @@ class SkillsService:
         return [BUILTIN_SKILLS_DIR, USER_SKILLS_DIR]
 
     def _skill_file(self, name: str) -> str | None:
+        # 防路径穿越:技能名仅取 basename
+        name = os.path.basename(str(name or "").strip())
+        if not name:
+            return None
         for d in self._skill_dirs():
             for candidate in (f"{name}.md", name):
                 p = os.path.join(d, candidate)
@@ -148,16 +152,24 @@ class SkillsService:
         return SkillsOperationResult(ok=True, data={"uploaded": names}, message="上传成功")
 
     async def _upload_zip(self, raw: bytes) -> SkillsOperationResult:
+        if len(raw) > 50 * 1024 * 1024:
+            raise SkillsServiceError("ZIP 文件过大(上限 50MB)")
         os.makedirs(USER_SKILLS_DIR, exist_ok=True)
         zip_path = os.path.join(USER_SKILLS_DIR, "_upload.zip")
         with open(zip_path, "wb") as f:
             f.write(raw)
         imported = []
+        total = 0
         try:
             with zipfile.ZipFile(zip_path) as zf:
                 for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    total += info.file_size
+                    if total > 200 * 1024 * 1024:
+                        raise SkillsServiceError("ZIP 解压内容过大(上限 200MB)")
                     base = os.path.basename(info.filename)
-                    if not info.is_dir() and base.endswith(".md"):
+                    if base.endswith(".md"):
                         dest = os.path.join(USER_SKILLS_DIR, base)
                         with zf.open(info) as src, open(dest, "wb") as dst:
                             shutil.copyfileobj(src, dst)

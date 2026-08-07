@@ -527,3 +527,71 @@ async def dashboard_update_account(
     service: AuthService = Depends(get_auth_service),
 ):
     return await _update_account(request, payload, service)
+
+
+async def authenticate_websocket(websocket) -> tuple[AuthContext | None, str | None]:
+    """WebSocket 认证:验证 API Key 或 JWT。
+
+    返回 ``(AuthContext, raw_api_key)``;认证失败返回 ``(None, None)``。
+    """
+    from astrbot.dashboard.services.api_key_service import ApiKeyService
+
+    # 1. API Key(query/header)
+    raw_key = _extract_ws_raw_api_key(websocket)
+    if raw_key:
+        key_hash = ApiKeyService.hash_key(raw_key)
+        try:
+            api_key = await websocket.app.state.db.get_active_api_key_by_hash(key_hash)
+            if api_key is not None:
+                scopes = list(getattr(api_key, "scopes", []) or [])
+                return (
+                    AuthContext(
+                        username=f"{API_KEY_USERNAME_PREFIX}{api_key.key_id}",
+                        scopes=scopes,
+                        via="api_key",
+                    ),
+                    raw_key,
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 2. JWT(query ?token= / 子协议 auth.<token> / cookie)
+    token = (websocket.query_params.get("token") or "").strip()
+    if not token:
+        proto = websocket.headers.get("sec-websocket-protocol", "")
+        for part in proto.split(","):
+            part = part.strip()
+            if part.startswith("auth."):
+                token = part[len("auth.") :].strip()
+    if not token:
+        token = websocket.cookies.get("astrbot_dashboard_jwt", "")
+    if token:
+        try:
+            payload = jwt.decode(
+                token,
+                websocket.app.state.jwt_secret,
+                algorithms=["HS256"],
+            )
+            username = payload.get("username")
+            if isinstance(username, str) and username.strip():
+                return AuthContext(username=username, scopes=["*"], via="jwt"), None
+        except Exception:  # noqa: BLE001
+            pass
+    return None, None
+
+
+def _extract_ws_raw_api_key(websocket) -> str | None:
+    """从 WebSocket 提取 API Key。"""
+    if key := websocket.query_params.get("api_key"):
+        return key.strip()
+    if key := websocket.query_params.get("key"):
+        return key.strip()
+    if key := websocket.headers.get("X-API-Key"):
+        return key.strip()
+    auth_header = websocket.headers.get("Authorization", "").strip()
+    if auth_header.startswith("ApiKey "):
+        return auth_header.removeprefix("ApiKey ").strip()
+    if auth_header.startswith("Bearer "):
+        # Bearer 可能是 JWT 也可能是 API Key;这里交给 JWT 校验尝试
+        return None
+    return None

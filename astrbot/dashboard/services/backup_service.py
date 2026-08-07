@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import time
@@ -17,7 +18,10 @@ from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path, get_astrbot_path
 
 BACKUP_DIR = os.path.join(get_astrbot_data_path(), "backups")
-_EXCLUDE_DIRS = {"backups", "temp", "webchat", "site-packages", "__pycache__", "workspaces"}
+_EXCLUDE_DIRS = {
+    "backups", "temp", "webchat", "site-packages", "__pycache__",
+    "workspaces", "reference", "node_modules", ".venv", "venv",
+}
 
 
 class BackupServiceError(Exception):
@@ -52,7 +56,7 @@ class BackupService:
                 zf.write(cfg, "config.yaml")
             if os.path.isdir(data_dir):
                 for root, dirs, files in os.walk(data_dir):
-                    dirs[:] = [d for d in dirs if d not in _EXCLUDE_DIRS]
+                    dirs[:] = [d for d in dirs if d not in _EXCLUDE_DIRS and d != ".git"]
                     for f in files:
                         if f.endswith((".tmp", ".lock")):
                             continue
@@ -63,6 +67,15 @@ class BackupService:
                         except OSError:
                             continue
         return zip_path
+
+    async def export_backup(self, name: str | None = None) -> dict:
+        """创建备份(后台线程避免阻塞事件循环)并返回信息。"""
+        path = await asyncio.to_thread(self.create_backup, name)
+        return {
+            "filename": os.path.basename(path),
+            "path": path,
+            "size": os.path.getsize(path),
+        }
 
     async def list_backups(self, *, page: int = 1, page_size: int = 20) -> dict:
         os.makedirs(self.backup_dir, exist_ok=True)
@@ -127,6 +140,8 @@ class BackupService:
 
     async def upload_backup(self, file) -> dict:
         raw = await file.read()
+        if len(raw) > 200 * 1024 * 1024:
+            raise BackupServiceError("备份文件过大(上限 200MB)")
         fname = getattr(file, "filename", "") or f"backup_{int(time.time())}.zip"
         if not fname.endswith(".zip"):
             fname += ".zip"
@@ -142,11 +157,18 @@ class BackupService:
         if not os.path.isfile(full):
             raise BackupServiceError("备份文件不存在")
         data_dir = get_astrbot_data_path()
+        total_size = 0
         with zipfile.ZipFile(full) as zf:
             for info in zf.infolist():
                 if info.is_dir():
                     continue
-                rel = info.filename
+                total_size += info.file_size
+                if total_size > 500 * 1024 * 1024:
+                    raise BackupServiceError("备份解压内容过大(上限 500MB)")
+                rel = info.filename.replace("\\", "/")
+                # 防 zip slip:拒绝绝对路径或带 .. 的路径
+                if os.path.isabs(rel) or ".." in rel.split("/"):
+                    raise BackupServiceError("备份文件包含非法路径,已中止恢复")
                 # config.yaml 恢复到源码目录;data/* 恢复到数据目录
                 if rel == "config.yaml":
                     target = os.path.join(get_astrbot_path(), "config.yaml")

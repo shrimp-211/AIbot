@@ -123,8 +123,12 @@ class OpenApiService:
             adapter = registry.get(platform) if registry else None
             if adapter is not None:
                 try:
-                    await adapter.send_text(user_id, message)
-                    return
+                    if user_id and hasattr(adapter, "send_private_msg"):
+                        await adapter.send_private_msg(user_id, message)
+                        return
+                    if hasattr(adapter, "broadcast"):
+                        await adapter.broadcast(None, message)
+                        return
                 except Exception as exc:  # noqa: BLE001
                     logger.error("开放 API 发送消息失败: %s", exc)
                     raise OpenApiServiceError(f"发送失败: {exc}") from exc
@@ -137,14 +141,16 @@ class OpenApiService:
     async def run_chat_websocket(
         self,
         raw_api_key: str | None,
-        receive_json,
-        send_json,
-        close,
-        conf_list: list[dict],
-        chat_bridge: OpenApiWebSocketChatBridge,
+        username: str | None = None,
+        receive_json=None,
+        send_json=None,
+        close=None,
+        conf_list: list[dict] | None = None,
+        chat_bridge: OpenApiWebSocketChatBridge | None = None,
     ) -> None:
         """开放 API 的 WebSocket 聊天(对接本项目引擎)。"""
-        username = f"{API_KEY_USERNAME_PREFIX}openapi" if raw_api_key else "openapi"
+        if not username:
+            username = f"{API_KEY_USERNAME_PREFIX}openapi" if raw_api_key else "openapi"
         try:
             await send_json({"type": "session_ready", "data": {"session_id": "default"}})
         except Exception:
@@ -191,18 +197,28 @@ class OpenApiService:
                 event._tool_callback = lambda *a: None
                 event._send_callback = lambda *a, **k: None
 
-                task = asyncio.create_task(self.engine.process(event))
+                async def _run_process() -> None:
+                    try:
+                        reply = await self.engine.process(event)
+                        queue.put_nowait(("__final__", reply or ""))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("开放 API WS 引擎错误: %s", exc, exc_info=True)
+                        queue.put_nowait(("__final__", ""))
+
+                task = asyncio.create_task(_run_process())
                 reply_parts = []
+                final_reply = ""
                 while True:
                     kind, data = await queue.get()
+                    if kind == "__final__":
+                        final_reply = data or ""
+                        break
                     if kind == "plain":
                         reply_parts.append(data)
                         await send_json({"type": "delta", "data": data})
                     elif kind == "reasoning":
                         await send_json({"type": "reasoning", "data": data})
-                    if task.done() and queue.empty():
-                        break
-                reply = "".join(reply_parts)
+                reply = final_reply or "".join(reply_parts)
                 await send_json({"type": "message", "data": {"content": reply}})
         except asyncio.CancelledError:
             pass
