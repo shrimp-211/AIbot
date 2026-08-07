@@ -63,8 +63,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 # 仓库根即 `src` 包:clone 后 `pip install -e .` 即可在任意目录 `python -m src.main` / `qqbot`
+# 必须显式列出全部子包(含 src.tests):`packages=["src"]` 只打包顶层包,
+# 子包缺失会让 CI 的 `import src.tests.*` / `import src.agent` 失败。
 [tool.setuptools]
-packages = ["src"]
-
-[tool.setuptools.package-dir]
-src = "."
+package-dir = { src = "." }
+packages = [
+    "src", "src.adapter", "src.agent", "src.agent.knowledge", "src.agent.mcp",
+    "src.agent.memory", "src.agent.sandbox", "src.agent.tools", "src.pipeline",
+    "src.pipeline.stages", "src.plugins", "src.providers", "src.providers.sources",
+    "src.security", "src.storage", "src.tests", "src.utils", "src.webui",
+]
