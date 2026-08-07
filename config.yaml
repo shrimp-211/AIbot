@@ -148,6 +148,7 @@ agent:
   workdir: "."             # 文件工具的操作根目录
   max_iterations: 8        # ReAct 循环最大迭代次数
   max_context_tokens: 0    # 上下文压缩触发阈值;0=按 provider 模型自动推断窗口(超过 82% 自动压缩)
+  keep_recent_ratio: 0.15  # 上下文压缩时按 token 比例保留最近精确轮次(0-0.3),其余旧轮次 LLM 摘要(参照 AstrBot/Claude Code)
   tool_call_timeout: 60    # 单工具执行超时(秒),防止工具挂起阻塞 Agent 循环(参照 AstrBot)
   qq_repeat_threshold: 3   # QQ 群复读参与阈值(同消息连续 N 次且被@ 时跟上)
 
