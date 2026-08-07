@@ -822,9 +822,11 @@ class WebUIServer:
                     await ws.send_str(json.dumps({"role": "progress", "text": _text}))
 
             async def _stream(_content: str, _reasoning: str) -> None:
-                # LLM 流式 delta:WebUI 逐 token 展示
+                # LLM 流式 delta:WebUI 逐 token 展示;思考增量走 reasoning 通道
                 if _content and not ws.closed:
                     await ws.send_str(json.dumps({"role": "stream", "text": _content}))
+                elif _reasoning and not ws.closed:
+                    await ws.send_str(json.dumps({"role": "reasoning", "text": _reasoning}))
 
             event._stream_callback = _stream
 

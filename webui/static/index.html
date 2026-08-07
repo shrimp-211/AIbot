@@ -35,6 +35,7 @@
   #chat .msg b { color: var(--accent); }
   #chat .msg.assistant b { color: var(--green); }
   #chat .msg.progress { color: var(--muted); font-style: italic; font-size: 13px; }
+  #chat .msg.reasoning { color: var(--muted); font-size: 12px; opacity: .75; border-left: 2px solid var(--border); padding-left: 8px; }
   .nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
   .nav button { background: transparent; border: 1px solid var(--border); font-size: 13px; padding: 8px 12px; border-radius: 6px; }
   .nav button.active { background: var(--accent); border-color: var(--accent); }
@@ -477,6 +478,7 @@ function connectChat() {
   chatWs.onmessage = e => {
     const d = JSON.parse(e.data);
     if (d.role === 'progress') { addChat('progress', d.text); return; }
+    if (d.role === 'reasoning') { addChat('reasoning', d.text); return; }
     if (d.role === 'stream') {
       // 流式 delta:追加到当前流式气泡(无则新建)
       if (!streamBubble || !document.body.contains(streamBubble)) {
@@ -502,7 +504,7 @@ function connectChat() {
 function addChat(role, text) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
-  const label = role === 'assistant' ? 'AI' : (role === 'progress' ? '⏳' : '我');
+  const label = role === 'assistant' ? 'AI' : (role === 'progress' ? '⏳' : (role === 'reasoning' ? '🧠' : '我'));
   div.innerHTML = `<b>${label}:</b> <span>${text}</span>`;
   $('chat').appendChild(div);
   $('chat').scrollTop = $('chat').scrollHeight;

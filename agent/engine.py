@@ -9,6 +9,7 @@ import asyncio
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -799,6 +800,10 @@ class AgentEngine:
                         "content": output + _repeated_tool_guidance(name, same_tool_streak),
                     }
                 )
+            # 工具图片回显:把本轮工具返回的图片注入上下文供多模态模型查看
+            pending_imgs = ctx.extra.pop("_tool_images", None) if ctx.extra else None
+            if pending_imgs:
+                await self._append_tool_images(messages, pending_imgs)
             if any_awaiting:
                 # ask_user/审批挂起:消息历史已完整(所有 tool_calls 都有对应 tool 结果),
                 # 等待用户回复后再继续(下一轮进入审批续接)
@@ -890,11 +895,68 @@ class AgentEngine:
             # 不向模型泄漏异常细节(CLAUDE.md 安全规范 3)
             return "工具执行出错,请查看服务端日志"
 
+        # 工具图片回显(参照 AstrBot tool_image_cache):检测返回的本地图片路径,后续注入上下文
+        img_paths = self._extract_tool_images(result)
+        if img_paths:
+            ctx.extra.setdefault("_tool_images", []).extend(img_paths)
+
         raw = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
         # 超大结果落盘:超过阈值时全文存盘,向模型返回引用标记(防上下文膨胀)
         if self.tool_result_disk is not None:
             raw = await self.tool_result_disk.store(raw, name)
         return compress_tool_result(raw)
+
+    @staticmethod
+    def _extract_tool_images(result: Any) -> list[str]:
+        """从工具返回 dict 中提取本地图片路径(path/image/file 等键)。"""
+        if not isinstance(result, dict):
+            return []
+        paths: list[str] = []
+        for key in ("path", "image", "image_path", "file", "image_url"):
+            v = result.get(key)
+            if (
+                isinstance(v, str)
+                and v.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
+                and Path(v).is_file()
+            ):
+                paths.append(v)
+        return paths
+
+    async def _append_tool_images(self, messages: list[dict], paths: list[str]) -> None:
+        """把工具返回的图片以 user 消息注入上下文,供多模态模型直接查看(参照 AstrBot)。
+
+        模型不支持图像输入时跳过;上限 3 张防上下文膨胀。
+        """
+        try:
+            from ..providers.modalities import MODALITY_IMAGE
+
+            if MODALITY_IMAGE not in getattr(self.provider, "modalities", ()):
+                return
+            from .tool_image_cache import ToolImageCache
+
+            cache = getattr(self, "tool_image_cache", None)
+            if cache is None:
+                cache = ToolImageCache()
+                self.tool_image_cache = cache
+            blocks: list[dict] = [{"type": "text", "text": "[工具返回的图片,请查看画面并据此继续]"}]
+            is_anthropic = getattr(self.provider, "image_block_format", "openai") == "anthropic"
+            for p in paths[:3]:
+                b64, mime = cache.get_image_base64(p)
+                if not b64:
+                    continue
+                if is_anthropic:
+                    blocks.append(
+                        {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
+                    )
+                else:
+                    blocks.append(
+                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+                    )
+            if len(blocks) > 1:
+                messages.append({"role": "user", "content": blocks})
+                logger.info("已注入 {} 张工具图片到上下文供模型查看", len(blocks) - 1)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("工具图片回显失败: {}", exc)
 
     async def _request_tool_approval(self, ctx: ToolContext, exc: ToolApprovalRequired) -> str:
         """工具触发 ASK:向用户发送审批请求并挂起当前回合(Claude Code 权限批准)。

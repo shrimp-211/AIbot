@@ -9,10 +9,30 @@ from __future__ import annotations
 from typing import Any
 
 
-def estimate_tokens(text: str) -> int:
-    """粗略估算文本 token 数(中文字/词混合)。"""
+def estimate_tokens(text: Any) -> int:
+    """粗略估算消息 token 数(中文字/词混合)。
+
+    兼容多模态 content(列表块):文本块按字符估算,图片/音频块按固定开销
+    (参照 OpenAI vision pricing,图片约 100-170 tokens)。
+    """
     if not text:
         return 0
+    if isinstance(text, list):
+        # 多模态 content 块列表
+        total = 0
+        for block in text:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "text":
+                total += estimate_tokens(block.get("text") or "")
+            elif btype in ("image", "image_url"):
+                total += 100  # 图片块估算开销
+            elif btype == "input_audio":
+                total += 32
+        return total
+    if not isinstance(text, str):
+        return 8
     cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
     other = len(text) - cjk
     return int(cjk * 0.6 + other * 0.25)
