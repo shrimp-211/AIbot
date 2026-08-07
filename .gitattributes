@@ -1,0 +1,3 @@
+# 前端构建产物:二进制文本,禁止换行符转换
+webui/dashboard/dist/** -text
+webui/dashboard/src/** -text

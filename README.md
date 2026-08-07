@@ -24,7 +24,7 @@
 | 安全 | 7 级权限 + deny→ask→allow 三层决策 + 可信目录/沙箱 + 审计日志 + SSRF/ReDoS 防护 |
 | 反馈 | 私聊/WebUI 实时处理进度(⏳ 思考中 / 🔧 正在执行),群聊自动抑制不刷屏 |
 | 统计 | LLM token 用量与估算成本统计(`/cost` + WebUI),模型热切换(`/model`),编排器延迟/成本统计 |
-| 管理 | WebUI 控制台:状态/工具/定时任务/知识库/提供商测试/插件+市场/适配器/编排器/聊天/审计 |
+| 管理 | WebUI 控制台(缝合自 AstrBot Dashboard):状态/工具/定时任务/知识库/提供商测试/插件+市场/适配器/编排器/聊天/审计 |
 
 ## 快速开始
 
@@ -234,8 +234,20 @@ CI(GitHub Actions)会对 Python 3.10/3.11/3.12 三版本运行上述全部测试
 
 连接不上 / 模型报错 / 群聊无响应等排查方法,见 [FAQ.md](FAQ.md)。
 
+## 参考项目
+
+本项目大量参考并缝合了以下开源项目的设计、代码与思路(按参考深度排序):
+
+| 项目 | 仓库 | 参考内容 |
+|---|---|---|
+| **AstrBot** | [AstrBotDevs/AstrBot](https://github.com/AstrBotDevs/AstrBot) | **WebUI Dashboard 全面缝合**(Vue3 前端 + FastAPI 风格后端 API 移植适配)、消息管道洋葱模型、人格系统、上下文压缩、插件生命周期钩子、向量知识库 RAG、提供商/STT/TTS/Embedding/Rerank 抽象 |
+| **Claude Code** | [anthropics/claude-code](https://github.com/anthropics/claude-code) | ReAct 工具循环、权限分层(deny→ask→allow)、子代理委派、计划模式、工具调用规范 |
+| **NoneBot2** | [nonebot/nonebot2](https://github.com/nonebot/nonebot2) | 适配器插件化、依赖注入、插件生态规范 |
+| **Codex / Gemini CLI** | [openai/codex](https://github.com/openai/codex) · [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) | 沙箱隔离、MCP 外部工具、上下文压缩策略 |
+| **OpenClaw / OpenCode / Hermes** | — | 工具生态与多 Agent 协作思路 |
+
+> AstrBot 及所列项目均为开源项目,版权归其各自作者所有;本项目的缝合与适配遵循 MIT 许可证。
+
 ## 许可证
 
 [MIT](LICENSE)
-
-> 设计参考:AstrBot / NoneBot2 / Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes。

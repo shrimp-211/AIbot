@@ -11,6 +11,19 @@ dependencies = [
     "loguru>=0.7",
     "pyyaml>=6.0",
     "openai>=1.30",
+    # AstrBot Dashboard(WebUI)依赖
+    "fastapi>=0.124",
+    "uvicorn>=0.30",
+    "hypercorn>=0.17",
+    "PyJWT>=2.10",
+    "pyotp>=2.9",
+    "sqlmodel>=0.0.16",
+    "python-multipart>=0.0.9",
+    "apscheduler>=3.10",
+    "deprecated>=1.2.18",
+    "aiofiles>=25.1.0",
+    "aiosqlite>=0.21.0",
+    "psutil>=5.8.0",
 ]
 
 [project.optional-dependencies]
@@ -72,4 +85,15 @@ packages = [
     "src.agent.memory", "src.agent.sandbox", "src.agent.tools", "src.pipeline",
     "src.pipeline.stages", "src.plugins", "src.providers", "src.providers.sources",
     "src.security", "src.storage", "src.tests", "src.utils", "src.webui",
+    # AstrBot Dashboard 兼容层(astrbot 命名空间)
+    "astrbot", "astrbot.api", "astrbot.core", "astrbot.core.agent",
+    "astrbot.core.backup", "astrbot.core.computer", "astrbot.core.config",
+    "astrbot.core.db", "astrbot.core.db.vec_db", "astrbot.core.db.vec_db.faiss_impl",
+    "astrbot.core.knowledge_base", "astrbot.core.message", "astrbot.core.platform",
+    "astrbot.core.platform.sources", "astrbot.core.platform.sources.dingtalk",
+    "astrbot.core.platform.sources.lark", "astrbot.core.platform.sources.qqofficial",
+    "astrbot.core.platform.sources.weixin_oc", "astrbot.core.provider",
+    "astrbot.core.skills", "astrbot.core.star", "astrbot.core.star.filter",
+    "astrbot.core.tools", "astrbot.dashboard", "astrbot.dashboard.api",
+    "astrbot.dashboard.services",
 ]

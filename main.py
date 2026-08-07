@@ -59,7 +59,7 @@ from .security.auth import AuthManager
 from .storage.db import JsonKV
 from .utils.config import Config, load_config, load_dotenv
 from .utils.logger import setup_logger
-from .webui.server import WebUIServer
+from .webui.dashboard_server import DashboardServer
 
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BASE_DIR.parent
@@ -703,9 +703,9 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
             migrated = migrate_json_kv(db, sqlmodel_engine)
             logger.info("SQLModel 迁移: {}", migrated)
 
-    webui: WebUIServer | None = None
+    webui: DashboardServer | None = None
     if config.get("webui.enabled", True):
-        webui = WebUIServer(
+        webui = DashboardServer(
             config,
             host=config.get("webui.host", "127.0.0.1"),
             port=int(config.get("webui.port", 8080)),
@@ -713,8 +713,11 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
                 "engine": engine, "tools": tools, "cron": cron,
                 "plugin_registry": plugin_registry,
                 "adapter_registry": adapter_registry,
-                "orchestrator": orchestrator,
-                "plugin_market": plugin_market,
+                "persona": persona,
+                "knowledge": knowledge,
+                "provider": provider,
+                "plugin_installer": plugin_market.installer,
+                "plugin_dirs": _plugin_dirs(),
             },
             config_path=config_path,
         )

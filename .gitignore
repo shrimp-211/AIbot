@@ -33,3 +33,8 @@ Thumbs.db
 
 # 测试环境(独立副本,不提交)
 test_env/
+
+# 前端构建产物:提交 AstrBot Dashboard dist(保证开箱即用),其余 dist 忽略
+dist/
+!webui/dashboard/dist/
+!webui/dashboard/dist/**
