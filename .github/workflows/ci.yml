@@ -9,6 +9,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false        # 一个版本失败不取消其他版本,便于查看全部失败
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
@@ -24,14 +25,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
+      - name: Environment info
+        run: |
+          python --version
+          python -c "import sys, aiohttp, openai; print('python', sys.version); print('aiohttp', aiohttp.__version__); print('openai', openai.__version__)"
+
       - name: Import self-check
-        run: python -c "import src.main"
+        run: python -u -c "import src.main"
 
       - name: Core tests
-        run: python -m src.tests.core_tests
+        run: python -u -m src.tests.core_tests
 
       - name: Tool integration tests
-        run: python -m src.tests.tools_integration_test
+        run: python -u -m src.tests.tools_integration_test
 
       - name: Plugin load tests
-        run: python -m src.tests.plugin_load_test
+        run: python -u -m src.tests.plugin_load_test
