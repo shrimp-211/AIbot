@@ -113,7 +113,19 @@ def truncate_by_halving(messages: list[dict]) -> list[dict]:
     return fix_messages(_ensure_user_message(system, truncated, messages))
 
 
-def should_compress(messages: list[dict], max_tokens: int, threshold: float = 0.82) -> bool:
+def should_compress(
+    messages: list[dict],
+    max_tokens: int,
+    threshold: float = 0.82,
+    trusted_tokens: int = 0,
+) -> bool:
+    """判断是否需压缩。
+
+    trusted_tokens>0 时优先使用 LLM API 报告的实际输入 token(参照 AstrBot
+    trusted_token_usage),更准确;否则回退字符估算。
+    """
+    if trusted_tokens > 0:
+        return trusted_tokens >= max_tokens * threshold
     total = sum(estimate_tokens(m.get("content") or "") for m in messages)
     return total >= max_tokens * threshold
 

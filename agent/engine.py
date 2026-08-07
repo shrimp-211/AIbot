@@ -624,12 +624,13 @@ class AgentEngine:
         # 空输出重试计数(参照 AstrBot tool_loop_agent_runner):LLM 无内容且无工具调用时指数退避重试
         empty_retries = 0
         _EMPTY_OUTPUT_MAX_RETRIES = 3
+        trusted_tokens = 0  # 上一轮 LLM 实际报告的输入 token(可信用量)
         for _ in range(max_iterations):
             if not thinking_sent:
                 # 进入处理即提示"思考中"(仅私聊/WebUI,只发一次避免刷屏)
                 await self._send_progress(ctx, "⏳ 思考中...")
                 thinking_sent = True
-            if should_compress(messages, max_context):
+            if should_compress(messages, max_context, trusted_tokens=trusted_tokens):
                 if self.hooks:
                     await self.hooks.trigger("pre_compaction", messages=len(messages))
                 logger.info("触发上下文压缩(ReAct 循环内)")
@@ -647,6 +648,9 @@ class AgentEngine:
             result = await self.provider.chat(messages, system_prompt=system_prompt, tools=schemas)
             if self.hooks:
                 await self.hooks.trigger("post_llm_response", content=result.get("content", "")[:200])
+            # 记录 LLM 实际输入 token 作为可信用量(供下轮压缩判断,参照 AstrBot trusted_token_usage)
+            _usage = result.get("usage") or {}
+            trusted_tokens = int(_usage.get("prompt_tokens", 0) or 0)
             # 记录 token 用量与估算成本(usage 缺失如 mock 时自动跳过)
             self.usage.record(
                 result.get("usage"),
@@ -825,15 +829,21 @@ class AgentEngine:
 
         # 一次性授权:用户已批准执行该工具(交互式审批),跳过权限检查(按会话限定)
         force = self.auth.is_tool_allowed(ctx.event.user_id, name, ctx.event.session_id)
+        # 工具执行超时(参照 AstrBot tool_call_timeout):防止工具挂起阻塞整个 Agent 循环
+        tool_timeout = int(self.config.get("agent.tool_call_timeout", 60) or 60)
         try:
-            result = await self.tools.execute(
-                name, role_level, ctx, _skip_permission=force, **args
+            result = await asyncio.wait_for(
+                self.tools.execute(name, role_level, ctx, _skip_permission=force, **args),
+                timeout=tool_timeout,
             )
         except ToolApprovalRequired as exc:
             return await self._request_tool_approval(ctx, exc)
         except PermissionError as exc:
             logger.warning(f"权限拦截工具 {name}: {exc}")
             return f"权限不足: {exc}"
+        except asyncio.TimeoutError:
+            logger.warning(f"工具 {name} 执行超时({tool_timeout}s)")
+            return f"工具 {name} 执行超时(>{tool_timeout}s),已中断。"
         except Exception:  # noqa: BLE001
             logger.exception(f"工具 {name} 执行出错")
             # 不向模型泄漏异常细节(CLAUDE.md 安全规范 3)
