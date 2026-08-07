@@ -146,6 +146,18 @@ class AstrBotConfig(dict):
             gen = self._project_config.get("webui.password") or None
         if not gen:
             gen = generate_dashboard_password()
+            if self._project_config is None:
+                # 未绑定主程序配置:仅内存占位,不写盘不打印(等待 bind_project_config 后初始化)
+                self["dashboard"] = {
+                    "username": "admin",
+                    "pbkdf2_password": hash_dashboard_password(gen),
+                    "password": hash_md5_dashboard_password(gen),
+                    "password_storage_upgraded": True,
+                    "password_change_required": True,
+                    "jwt_secret": os.urandom(32).hex(),
+                    "port": 8080,
+                }
+                return
             try:
                 print(
                     f"\n[dashboard] 已生成 WebUI 管理密码: {gen}\n",
