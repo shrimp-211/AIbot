@@ -1814,3 +1814,13 @@ class ProviderConfigService:
             return
         for provider in providers:
             await run_maybe_async(lambda provider=provider: reload_fn(provider))
+
+
+# ---- 本项目适配:AstrBot 原版 BotConfigService 基于 AstrBot 的 platform 配置列表模型,
+# 与本项目 config.yaml 的平台段(onebot/qq_official/telegram 等)不匹配,覆盖为本项目实现。----
+from astrbot.dashboard.services.bot_service import (  # noqa: E402
+    BotConfigService as BotConfigService,
+)
+from astrbot.dashboard.services.provider_service import (  # noqa: E402
+    ProviderConfigService as ProviderConfigService,
+)

@@ -103,6 +103,11 @@ class AstrBotCoreLifecycle:
 
         self._engine = None  # 本项目 AgentEngine
         self._restart_requested = False
+        # 本项目服务(供 dashboard services 映射)
+        self.skills = None  # src.agent.skills.SkillRegistry
+        self.generation = None  # src.agent.generation.GenerationManager
+        self.stt_provider = None
+        self.tts_provider = None
 
     # ---------------- 绑定本项目服务 ----------------
 
@@ -121,6 +126,10 @@ class AstrBotCoreLifecycle:
         plugin_installer=None,
         plugin_dirs: list[str] | None = None,
         adapter_registry=None,
+        skills=None,
+        generation=None,
+        stt_provider=None,
+        tts_provider=None,
     ) -> None:
         """绑定本项目核心服务,构建各 compat 管理器。"""
         if config is not None:
@@ -128,6 +137,10 @@ class AstrBotCoreLifecycle:
             self.astrbot_config = AstrBotConfig.get_singleton()
             self.astrbot_config_mgr = _CompatAstrBotConfigManager(self.astrbot_config)
         self._engine = engine
+        self.skills = skills
+        self.generation = generation
+        self.stt_provider = stt_provider
+        self.tts_provider = tts_provider
         self.persona_mgr = PersonaManagerCompat(persona)
         self.cron_manager = CronManagerCompat(cron)
         self.platform_manager = PlatformManagerCompat(adapter_registry)

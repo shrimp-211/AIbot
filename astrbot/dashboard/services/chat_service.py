@@ -397,3 +397,11 @@ class ChatService:
             raise ChatServiceError("Permission denied")
         yield _sse({"type": "complete", "data": ""})
         yield _sse({"type": "end"})
+
+    async def create_attachment_from_file(self, file) -> dict:
+        """兼容 open_api WS 桥的附件创建。"""
+        return await self.save_uploaded_file(file)
+
+    async def save_bot_message(self, *args, **kwargs) -> None:
+        """兼容 open_api WS 桥(本项目不额外持久化机器人消息)。"""
+        return None

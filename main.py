@@ -718,6 +718,10 @@ async def run(config_path: str | Path = DEFAULT_CONFIG, log_level: str = "INFO")
                 "provider": provider,
                 "plugin_installer": plugin_market.installer,
                 "plugin_dirs": _plugin_dirs(),
+                "skills": skills,
+                "generation": generation,
+                "stt_provider": stt_provider,
+                "tts_provider": tts_provider,
             },
             config_path=config_path,
         )

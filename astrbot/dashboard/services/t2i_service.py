@@ -1,130 +1,93 @@
+"""T2iService(本项目适配):文生图 HTML 模板管理。
+
+模板为 HTML 文件,存储在 ``data/t2i_templates``;激活模板记录在 ``data/t2i_active.json``。
+"""
+
 from __future__ import annotations
+
+import json
+import os
 
 from astrbot.core import logger
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
-from astrbot.core.utils.t2i.template_manager import TemplateManager
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
+T2I_DIR = os.path.join(get_astrbot_data_path(), "t2i_templates")
+_ACTIVE_FILE = os.path.join(get_astrbot_data_path(), "t2i_active.json")
 
 
 class T2iServiceError(Exception):
-    def __init__(self, message: str, status_code: int = 500) -> None:
-        super().__init__(message)
-        self.status_code = status_code
+    pass
 
 
 class T2iService:
-    def __init__(
-        self,
-        core_lifecycle: AstrBotCoreLifecycle,
-        manager: TemplateManager | None = None,
-    ) -> None:
+    def __init__(self, core_lifecycle: AstrBotCoreLifecycle) -> None:
         self.core_lifecycle = core_lifecycle
-        self.config = core_lifecycle.astrbot_config
-        self.manager = manager or TemplateManager()
+        self.config = getattr(core_lifecycle, "astrbot_config", None)
+        self.generation = getattr(core_lifecycle, "generation", None)
 
-    async def reload_all_pipeline_schedulers(self) -> None:
-        for conf_id in self.core_lifecycle.astrbot_config_mgr.confs:
-            await self.core_lifecycle.reload_pipeline_scheduler(conf_id)
+    def _template_path(self, name: str) -> str:
+        safe = os.path.basename(name)
+        return os.path.join(T2I_DIR, safe if safe.endswith(".html") else safe + ".html")
 
-    async def sync_active_template_to_all_configs(self, name: str) -> None:
-        for config in self.core_lifecycle.astrbot_config_mgr.confs.values():
-            config["t2i_active_template"] = name
-            config.save_config()
-        await self.reload_all_pipeline_schedulers()
-
-    def list_templates(self):
+    def _read_active(self) -> str | None:
         try:
-            return self.manager.list_templates()
-        except Exception as exc:
-            raise T2iServiceError(str(exc)) from exc
+            if os.path.exists(_ACTIVE_FILE):
+                with open(_ACTIVE_FILE, encoding="utf-8") as f:
+                    return json.load(f).get("name") or None
+        except Exception:
+            pass
+        return None
 
-    def get_active_template(self) -> dict:
-        try:
-            return {"active_template": self.config.get("t2i_active_template", "base")}
-        except Exception as exc:
-            logger.error("Error in get_active_template", exc_info=True)
-            raise T2iServiceError(str(exc)) from exc
+    async def create_template(self, name: str, content: str) -> dict:
+        if not name or not name.strip():
+            raise T2iServiceError("缺少模板名称")
+        if not content or not content.strip():
+            raise T2iServiceError("模板内容为空")
+        os.makedirs(T2I_DIR, exist_ok=True)
+        path = self._template_path(name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return {"name": os.path.basename(path)[:-5], "content": content, "is_active": False}
 
-    def get_template(self, name: str) -> dict:
-        try:
-            return {"name": name, "content": self.manager.get_template(name)}
-        except FileNotFoundError as exc:
-            raise T2iServiceError("Template not found", 404) from exc
-        except Exception as exc:
-            raise T2iServiceError(str(exc)) from exc
+    async def set_active_template(self, name: str) -> dict:
+        path = self._template_path(name)
+        if not os.path.isfile(path):
+            raise T2iServiceError("模板不存在", )
+        os.makedirs(os.path.dirname(_ACTIVE_FILE), exist_ok=True)
+        with open(_ACTIVE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"name": os.path.basename(path)[:-5]}, f, ensure_ascii=False)
+        return {"name": os.path.basename(path)[:-5], "is_active": True}
 
-    def create_template(self, name: str | None, content: str | None) -> dict:
-        if not name or not content:
-            raise T2iServiceError("Name and content are required.", 400)
+    async def get_template(self, name: str) -> dict:
+        path = self._template_path(name)
+        if not os.path.isfile(path):
+            raise T2iServiceError("模板不存在", )
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        base = os.path.basename(path)[:-5]
+        return {"name": base, "content": content, "is_active": base == self._read_active()}
 
-        name = name.strip()
-        try:
-            self.manager.create_template(name, content)
-        except FileExistsError as exc:
-            raise T2iServiceError(
-                "Template with this name already exists.",
-                409,
-            ) from exc
-        except ValueError as exc:
-            raise T2iServiceError(str(exc), 400) from exc
-        except Exception as exc:
-            raise T2iServiceError(str(exc)) from exc
-
-        return {"name": name}
-
-    async def update_template(self, name: str, content: str | None) -> tuple[dict, str]:
-        name = name.strip()
-        if content is None:
-            raise T2iServiceError("Content is required.", 400)
-
-        try:
-            self.manager.update_template(name, content)
-            active_template = self.config.get("t2i_active_template", "base")
-            if name == active_template:
-                await self.reload_all_pipeline_schedulers()
-                message = f"模板 '{name}' 已更新并重新加载。"
-            else:
-                message = f"模板 '{name}' 已更新。"
-        except ValueError as exc:
-            raise T2iServiceError(str(exc), 400) from exc
-        except Exception as exc:
-            raise T2iServiceError(str(exc)) from exc
-
-        return {"name": name}, message
-
-    def delete_template(self, name: str) -> None:
-        name = name.strip()
-        try:
-            self.manager.delete_template(name)
-        except FileNotFoundError as exc:
-            raise T2iServiceError("Template not found.", 404) from exc
-        except ValueError as exc:
-            raise T2iServiceError(str(exc), 400) from exc
-        except Exception as exc:
-            raise T2iServiceError(str(exc)) from exc
-
-    async def set_active_template(self, name: str | None) -> str:
+    async def get_active_template(self) -> dict:
+        """返回当前激活模板(无激活时返回空模板)。"""
+        name = self._read_active()
         if not name:
-            raise T2iServiceError("模板名称(name)不能为空。", 400)
-
+            return {"name": None, "content": "", "is_active": True}
         try:
-            self.manager.get_template(name)
-            await self.sync_active_template_to_all_configs(name)
-        except FileNotFoundError as exc:
-            raise T2iServiceError(f"模板 '{name}' 不存在，无法应用。", 404) from exc
-        except Exception as exc:
-            logger.error("Error in set_active_template", exc_info=True)
-            raise T2iServiceError(str(exc)) from exc
+            return await self.get_template(name)
+        except T2iServiceError:
+            return {"name": name, "content": "", "is_active": True}
 
-        return f"模板 '{name}' 已成功应用。"
+    async def update_template(self, name: str, content: str) -> dict:
+        path = self._template_path(name)
+        if not os.path.isfile(path):
+            raise T2iServiceError("模板不存在", )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content or "")
+        return {"name": os.path.basename(path)[:-5], "content": content or ""}
 
-    async def reset_default_template(self) -> str:
-        try:
-            self.manager.reset_default_template()
-            await self.sync_active_template_to_all_configs("base")
-        except FileNotFoundError as exc:
-            raise T2iServiceError(str(exc), 404) from exc
-        except Exception as exc:
-            logger.error("Error in reset_default_template", exc_info=True)
-            raise T2iServiceError(str(exc)) from exc
-
-        return "Default template has been reset and activated."
+    async def delete_template(self, name: str) -> dict:
+        path = self._template_path(name)
+        if os.path.isfile(path):
+            os.remove(path)
+        return {"name": name, "deleted": True}
