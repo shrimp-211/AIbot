@@ -70,12 +70,17 @@ class PluginInstaller:
                 shutil.rmtree(tmp, ignore_errors=True)
 
     def uninstall(self, name: str) -> dict:
-        """卸载已安装的插件(删除插件目录)。"""
-        target = self.plugins_dir / _safe_name(str(name))
-        if not target.is_dir():
-            return {"ok": False, "error": f"插件未安装: {name}"}
-        shutil.rmtree(target, ignore_errors=True)
-        return {"ok": True, "removed": str(target)}
+        """卸载已安装的插件(目录插件删除目录,.py 插件删除文件)。"""
+        safe = _safe_name(str(name))
+        target = self.plugins_dir / safe
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+            return {"ok": True, "removed": str(target)}
+        file_target = self.plugins_dir / f"{safe}.py"
+        if file_target.is_file():
+            file_target.unlink(missing_ok=True)
+            return {"ok": True, "removed": str(file_target)}
+        return {"ok": False, "error": f"插件未安装: {name}"}
 
     @staticmethod
     def _locate_plugin_dir(root: Path) -> Path:

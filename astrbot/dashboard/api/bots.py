@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from astrbot.dashboard.responses import error, ok
 from astrbot.dashboard.schemas import BotConfigRequest, EnabledPatch
-from astrbot.dashboard.services.config_service import BotConfigService
+from astrbot.dashboard.services.bot_service import BotConfigService, BotConfigServiceError
 
 from .auth import AuthContext, ScopeDependency
 
@@ -58,7 +58,7 @@ async def list_bot_types(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    return ok(service.list_bot_types())
+    return ok(await service.list_bot_types())
 
 
 @router.get("/bots")
@@ -68,7 +68,7 @@ async def list_bots(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    return ok(service.list_bots(enabled=enabled, type_=type_))
+    return ok(await service.list_bots(enabled=enabled, type_=type_))
 
 
 @router.post("/bots")
@@ -77,7 +77,10 @@ async def create_bot(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    await service.create_bot(payload.to_dashboard_config())
+    try:
+        await service.create_bot(payload.to_dashboard_config())
+    except BotConfigServiceError as exc:
+        return error(str(exc))
     return ok(message="新增平台配置成功~")
 
 
@@ -86,7 +89,7 @@ async def list_bot_stats(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    return ok(service.get_bot_stats())
+    return ok(await service.get_bot_stats())
 
 
 @router.get("/bots/by-id")
@@ -95,7 +98,7 @@ async def get_bot_by_id(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    return ok(service.get_bot(bot_id))
+    return ok(await service.get_bot(bot_id))
 
 
 @router.put("/bots/by-id")
@@ -105,10 +108,13 @@ async def update_bot_by_id(
     service: BotConfigService = Depends(get_service),
 ):
     bot_id = _required_text(payload.bot_id, "bot_id")
-    await service.update_bot(
-        bot_id,
-        payload.to_dashboard_config(fallback_id=bot_id),
-    )
+    try:
+        await service.update_bot(
+            bot_id,
+            payload.to_dashboard_config(fallback_id=bot_id),
+        )
+    except BotConfigServiceError as exc:
+        return error(str(exc))
     return ok(message="更新平台配置成功~")
 
 
@@ -118,7 +124,10 @@ async def delete_bot_by_id(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    await service.delete_bot(bot_id)
+    try:
+        await service.delete_bot(bot_id)
+    except BotConfigServiceError as exc:
+        return error(str(exc))
     return ok(message="删除平台配置成功~")
 
 
@@ -129,7 +138,10 @@ async def set_bot_enabled_by_id(
     service: BotConfigService = Depends(get_service),
 ):
     bot_id = _required_text(payload.bot_id, "bot_id")
-    await service.set_bot_enabled(bot_id, bool(payload.enabled))
+    try:
+        await service.set_bot_enabled(bot_id, bool(payload.enabled))
+    except BotConfigServiceError as exc:
+        return error(str(exc))
     return ok(message="更新平台配置成功~")
 
 
@@ -149,7 +161,10 @@ async def set_bot_enabled(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    await service.set_bot_enabled(bot_id, payload.enabled)
+    try:
+        await service.set_bot_enabled(bot_id, payload.enabled)
+    except BotConfigServiceError as exc:
+        return error(str(exc))
     return ok(message="更新平台配置成功~")
 
 
@@ -167,7 +182,7 @@ async def get_bot(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    return ok(service.get_bot(bot_id))
+    return ok(await service.get_bot(bot_id))
 
 
 @router.put("/bots/{bot_id:path}")
@@ -177,7 +192,10 @@ async def update_bot(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    await service.update_bot(bot_id, payload.to_dashboard_config(fallback_id=bot_id))
+    try:
+        await service.update_bot(bot_id, payload.to_dashboard_config(fallback_id=bot_id))
+    except BotConfigServiceError as exc:
+        return error(str(exc))
     return ok(message="更新平台配置成功~")
 
 
@@ -187,7 +205,10 @@ async def delete_bot(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    await service.delete_bot(bot_id)
+    try:
+        await service.delete_bot(bot_id)
+    except BotConfigServiceError as exc:
+        return error(str(exc))
     return ok(message="删除平台配置成功~")
 
 
@@ -196,7 +217,7 @@ async def list_dashboard_alias_platforms(
     _auth: AuthContext = Depends(require_bot_scope),
     service: BotConfigService = Depends(get_service),
 ):
-    return ok({"platforms": service.list_bots()["bots"]})
+    return ok({"platforms": (await service.list_bots())["bots"]})
 
 
 @legacy_router.post("/new")

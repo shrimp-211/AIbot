@@ -270,7 +270,7 @@
                                                     variant="text"
                                                     class="ml-2"
                                                     :aria-label="tm('apiKey.docsLink')"
-                                                    href="https://docs.astrbot.app/dev/openapi.html"
+                                                    href="https://github.com/shrimp-211/AIbot#readme"
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                 >
@@ -658,9 +658,7 @@ const openExternalLink = (url) => {
 };
 
 const openFaqLink = () => {
-    openExternalLink(locale.value === 'en-US'
-        ? 'https://docs.astrbot.app/en/faq.html'
-        : 'https://docs.astrbot.app/faq.html');
+    openExternalLink('https://github.com/shrimp-211/AIbot/issues');
 };
 
 const resourceItems = computed(() => [
@@ -676,7 +674,7 @@ const resourceItems = computed(() => [
         title: t('core.navigation.documentation'),
         subtitle: tm('resources.documentation.subtitle'),
         icon: 'mdi-book-open-variant',
-        action: () => openExternalLink('https://docs.astrbot.app')
+        action: () => openExternalLink('https://github.com/shrimp-211/AIbot#readme')
     },
     {
         key: 'faq',

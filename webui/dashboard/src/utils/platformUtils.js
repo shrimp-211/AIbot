@@ -52,27 +52,14 @@ export function getPlatformIcon(name) {
  */
 export function getTutorialLink(platformType) {
   const tutorialMap = {
-    "qq_official_webhook": "https://docs.astrbot.app/platform/qqofficial/webhook.html",
-    "qq_official": "https://docs.astrbot.app/platform/qqofficial/websockets.html",
-    "aiocqhttp": "https://docs.astrbot.app/platform/aiocqhttp.html",
-    "wecom": "https://docs.astrbot.app/platform/wecom.html",
-    "weixin_oc": "https://docs.astrbot.app/platform/weixin_oc.html",
-    "wecom_ai_bot": "https://docs.astrbot.app/platform/wecom_ai_bot.html",
-    "lark": "https://docs.astrbot.app/platform/lark.html",
-    "telegram": "https://docs.astrbot.app/platform/telegram.html",
-    "dingtalk": "https://docs.astrbot.app/platform/dingtalk.html",
-    "weixin_official_account": "https://docs.astrbot.app/platform/weixin-official-account.html",
-    "discord": "https://docs.astrbot.app/platform/discord.html",
-    "slack": "https://docs.astrbot.app/platform/slack.html",
-    "kook": "https://docs.astrbot.app/platform/kook.html",
-    "vocechat": "https://docs.astrbot.app/platform/vocechat.html",
-    "satori": "https://docs.astrbot.app/platform/satori/guide.html",
-    "misskey": "https://docs.astrbot.app/platform/misskey.html",
-    "line": "https://docs.astrbot.app/platform/line.html",
-    "matrix": "https://docs.astrbot.app/platform/matrix.html",
-    "mattermost": "https://docs.astrbot.app/platform/mattermost.html",
+    "onebot": "https://onebot.dev/",
+    "onebot_forward": "https://onebot.dev/",
+    "onebot_http": "https://onebot.dev/",
+    "qq_official": "https://bot.q.qq.com/wiki/develop/api/",
+    "qq_official_webhook": "https://bot.q.qq.com/wiki/develop/api/",
+    "telegram": "https://core.telegram.org/bots/api",
   }
-  return tutorialMap[platformType] || "https://docs.astrbot.app";
+  return tutorialMap[platformType] || "https://github.com/shrimp-211/AIbot#readme";
 }
 
 /**

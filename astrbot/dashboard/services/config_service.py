@@ -295,11 +295,12 @@ def validate_config(data, schema: dict, is_core: bool) -> tuple[list[str], dict]
                 )
 
     if is_core:
-        meta_all = {
-            **schema["platform_group"]["metadata"],
-            **schema["provider_group"]["metadata"],
-            **schema["misc_config_group"]["metadata"],
-        }
+        meta_all = {}
+        for group in schema.values():
+            if isinstance(group, dict):
+                group_meta = group.get("metadata")
+                if isinstance(group_meta, dict):
+                    meta_all.update(group_meta)
         validate(data, meta_all)
     else:
         validate(data, schema)
@@ -532,7 +533,7 @@ class ConfigProfileService:
                 "config:edit_admin scope is required to change admins_id",
                 status_code=403,
             )
-        conf_id = await self.acm.create_conf(
+        conf_id = self.acm.create_conf(
             name=name,
             config=config or DEFAULT_CONFIG,
         )
@@ -603,10 +604,7 @@ class ConfigProfileService:
         if config_id not in self.acm.confs:
             raise ValueError(f"Config file {config_id} does not exist")
         config = copy.deepcopy(config)
-        if config_id == "default":
-            default_conf = getattr(self.acm, "default_conf", self.acm.confs["default"])
-            for key in ("provider_sources", "provider", "platform"):
-                config[key] = default_conf.get(key, [])
+        # 本项目平台/提供商为顶层段,不注入 AstrBot 的 platform/provider 数组
 
         current_config = self.acm.confs[config_id]
         if (
@@ -681,7 +679,7 @@ class ConfigProfileService:
         )
 
     async def rename_profile(self, config_id: str, name: str | None) -> None:
-        if not await self.acm.update_conf_info(config_id, name=name):
+        if not self.acm.update_conf_info(config_id, name=name):
             raise ValueError("Failed to update config profile")
 
     async def rename_profile_from_dashboard_payload(self, payload: object) -> str:
@@ -695,7 +693,7 @@ class ConfigProfileService:
         return "更新成功"
 
     async def delete_profile(self, config_id: str) -> None:
-        if not await self.acm.delete_conf(config_id):
+        if not self.acm.delete_conf(config_id):
             raise ValueError("Failed to delete config profile")
         self.core_lifecycle.pipeline_scheduler_mapping.pop(config_id, None)
 
@@ -787,58 +785,31 @@ class ConfigDisplayService:
         return await self.get_configs(args.get("plugin_name", None))
 
     async def get_astrbot_config(self) -> dict:
+        """返回 dashboard 运行态配置(含 AstrBot 风格 platform 数组)。
+
+        platform 数组由本项目 5 个平台段(onebot/onebot_forward/onebot_http/
+        qq_official/telegram)生成,供前端平台页渲染平台卡片。
+        """
+        from astrbot.dashboard.services.bot_service import BOT_TYPES as _BOT_TYPES
+
         metadata = copy.deepcopy(CONFIG_METADATA_2)
-        platform_i18n = ConfigMetadataI18n.convert_to_i18n_keys(
-            {
-                "platform_group": {
-                    "metadata": {
-                        "platform": metadata["platform_group"]["metadata"]["platform"]
-                    }
+        config = dict(self.config)
+        platforms = []
+        for ptype in _BOT_TYPES:
+            cfg = dict(self.config.get(ptype, {}) or {})
+            platforms.append(
+                {
+                    "id": ptype,
+                    "type": ptype,
+                    "enable": bool(cfg.get("enabled", False)),
+                    "config": cfg,
                 }
-            }
-        )
-        metadata["platform_group"]["metadata"]["platform"] = platform_i18n[
-            "platform_group"
-        ]["metadata"]["platform"]
-
-        platform_default_tmpl = metadata["platform_group"]["metadata"]["platform"][
-            "config_template"
-        ]
-        platform_i18n_translations = {}
-        logo_registration_tasks = []
-
-        for platform in platform_registry:
-            if not platform.default_config_tmpl:
-                continue
-
-            platform_default_tmpl[platform.name] = copy.deepcopy(
-                platform.default_config_tmpl
             )
-            if platform.config_metadata:
-                self.inject_platform_metadata_with_i18n(
-                    platform,
-                    metadata,
-                    platform_i18n_translations,
-                )
-            if platform.logo_path:
-                logo_registration_tasks.append(
-                    self.register_platform_logo(platform, platform_default_tmpl),
-                )
-
-        if logo_registration_tasks:
-            await asyncio.gather(*logo_registration_tasks, return_exceptions=True)
-
-        provider_default_tmpl = metadata["provider_group"]["metadata"]["provider"][
-            "config_template"
-        ]
-        for provider in provider_registry:
-            if provider.default_config_tmpl:
-                provider_default_tmpl[provider.type] = provider.default_config_tmpl
-
+        config["platform"] = platforms
         return {
             "metadata": metadata,
-            "config": self.config,
-            "platform_i18n_translations": platform_i18n_translations,
+            "config": config,
+            "platform_i18n_translations": {},
         }
 
     def get_plugin_config(self, plugin_name: str) -> dict:

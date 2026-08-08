@@ -80,8 +80,8 @@ BOT_TYPES: dict[str, dict] = {
 }
 
 
-class BotConfigServiceError(Exception):
-    pass
+class BotConfigServiceError(ValueError):
+    """平台配置错误(继承 ValueError,便于 API 层统一捕获)。"""
 
 
 class BotConfigService:
@@ -139,7 +139,7 @@ class BotConfigService:
         return None
 
     async def get_bot_stats(self) -> dict:
-        """平台运行统计。"""
+        """平台运行统计(AstrBot 前端状态字段)。"""
         platforms = []
         for key, meta in BOT_TYPES.items():
             cfg = self.config.get(key, {}) or {}
@@ -150,6 +150,18 @@ class BotConfigService:
                 "display_name": meta["display_name"],
                 "enable": enabled,
                 "connected": enabled,  # 本项目启动时统一加载;此处以配置为准
+                "status": "running" if enabled else "stopped",
+                "error_count": 0,
+                "last_error": None,
+                "weixin_oc": None,
+                "unified_webhook": None,
+                "meta": {
+                    "id": key,
+                    "name": key,
+                    "display_name": meta["display_name"],
+                    "support_proactive_message": True,
+                    "support_streaming_message": True,
+                },
             })
         return {"platforms": platforms}
 

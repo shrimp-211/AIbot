@@ -10,11 +10,35 @@ import os
 from typing import Any
 
 from astrbot.core import logger
+from astrbot.core.star.star import StarMetadata
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 
 class PluginVersionUnsupportedError(Exception):
     pass
+
+
+def build_star_from_meta(name: str, meta: dict) -> StarMetadata:
+    """把本项目插件的 metadata 转成 AstrBot star(补齐 dashboard 序列化所需字段)。"""
+    star = StarMetadata(
+        name=name,
+        description=str(meta.get("description") or meta.get("desc") or ""),
+        version=str(meta.get("version") or "1.0.0"),
+        author=str(meta.get("author") or ""),
+    )
+    star.desc = star.description
+    star.display_name = str(meta.get("display_name") or meta.get("name") or name)
+    star.repo = meta.get("repo") or meta.get("repository")
+    star.reserved = bool(meta.get("reserved", False))
+    star.activated = True
+    star.support_platforms = []
+    star.astrbot_version = str(meta.get("astrbot_version") or "")
+    star.i18n = {}
+    star.root_dir_name = name
+    star.logo_path = meta.get("logo_path") or ""
+    star.star_handler_full_names = []
+    star.skills = []
+    return star
 
 
 class StarContext:
@@ -64,6 +88,31 @@ class PluginManager:
         return self._failed_plugins
 
     # ---- 本项目插件能力映射 ----
+    async def load_and_sync_stars(self) -> None:
+        """加载本项目插件目录到 registry,并把插件元数据同步为 dashboard star。"""
+        if self.registry is None:
+            return
+        for d in self._plugin_dirs:
+            try:
+                await self.registry.load_from_directory(d)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"插件目录加载失败: {d}: {exc}")
+        self._sync_stars_from_registry()
+
+    def _sync_stars_from_registry(self) -> None:
+        """把 registry 中已加载插件的元数据注册为 dashboard star。"""
+        if self.registry is None or not hasattr(self.registry, "plugin_metadata"):
+            return
+        try:
+            metas = self.registry.plugin_metadata()
+        except Exception:  # noqa: BLE001
+            return
+        existing = {s.name for s in self.context.get_all_stars()}
+        for name, meta in metas.items():
+            if name in existing:
+                continue
+            self.context.register_star(build_star_from_meta(name, meta))
+
     async def reload(self, plugin_name: str | None = None) -> bool:
         try:
             if self.registry is not None:
@@ -100,7 +149,10 @@ class PluginManager:
     async def uninstall_plugin(self, plugin_name: str, **kwargs) -> bool:
         if self.installer is None:
             return False
-        return await self.installer.uninstall(plugin_name)
+        result = self.installer.uninstall(plugin_name)
+        if isinstance(result, dict):
+            return bool(result.get("ok", False))
+        return bool(result)
 
     async def uninstall_failed_plugin(self, plugin_name: str) -> bool:
         return False

@@ -69,6 +69,10 @@ class DashboardServer:
             await life.initialize()
         except Exception as exc:  # noqa: BLE001
             logger.warning("dashboard 数据库初始化失败(降级运行): {}", exc)
+        try:
+            await life.start()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("dashboard 启动阶段失败(降级运行): {}", exc)
 
         # 3. 组装 AstrBotDashboard ASGI 应用
         from astrbot.dashboard.server import AstrBotDashboard

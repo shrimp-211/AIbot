@@ -211,11 +211,11 @@ const MainRoutes = {
       ]
     },
 
-    // 旧版本的知识库路由
+    // 旧版本的知识库路由(本项目知识库为内置服务,重定向到新版页面)
     {
-      name: 'KnowledgeBase',
+      name: 'KnowledgeBaseLegacy',
       path: '/alkaid/knowledge-base',
-      component: () => import('@/views/alkaid/KnowledgeBase.vue'),
+      redirect: '/knowledge-base',
     },
     // {
     //   name: 'Alkaid',

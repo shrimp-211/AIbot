@@ -69,6 +69,8 @@ logger = _CompatLogger()
 class LogManager:
     """AstrBot 日志管理器接口(本项目日志由 loguru 统一管理)。"""
 
+    _plugin_log_levels: dict = {}
+
     @staticmethod
     def GetLogger(log_name: str = "astrbot"):
         return logger
@@ -80,6 +82,14 @@ class LogManager:
     @staticmethod
     def configure_trace_logger(config) -> None:
         return None
+
+    @classmethod
+    def set_plugin_log_level(cls, plugin_name: str, level: str | None) -> None:
+        cls._plugin_log_levels[str(plugin_name)] = level
+
+    @classmethod
+    def get_plugin_log_level(cls, plugin_name: str) -> str | None:
+        return cls._plugin_log_levels.get(str(plugin_name))
 
 
 class LogBroker:

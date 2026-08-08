@@ -169,6 +169,11 @@ class AstrBotCoreLifecycle:
             await self.db.initialize()
         except Exception as exc:  # noqa: BLE001
             logger.error(f"dashboard 数据库初始化失败: {exc}")
+        try:
+            if hasattr(self.plugin_manager, "load_and_sync_stars"):
+                await self.plugin_manager.load_and_sync_stars()
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"插件 star 同步失败: {exc}")
 
     async def stop(self) -> None:
         self.dashboard_shutdown_event.set()

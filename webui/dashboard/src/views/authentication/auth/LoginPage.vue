@@ -266,7 +266,7 @@ onMounted(async () => {
         </v-card-text>
         <v-card-actions class="version-dialog-actions">
           <v-btn
-            href="https://docs.astrbot.app/faq.html"
+            href="https://github.com/shrimp-211/AIbot/issues"
             target="_blank"
             rel="noopener noreferrer"
             variant="text"
