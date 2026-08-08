@@ -186,10 +186,45 @@ class CompatCronJob:
         self.last_run_at = last_run_at
 
 
+class _CronDb:
+    """CronService 需要的数据库接口(桥接本项目 CronManager)。"""
+
+    def __init__(self, cron) -> None:
+        self._cron = cron
+
+    async def get_cron_job(self, job_id: str):
+        if self._cron is None:
+            return None
+        try:
+            for t in self._cron.list_tasks():
+                if str(t.get("id", "")) == str(job_id):
+                    return CompatCronJob(
+                        job_id=str(t.get("id", "")),
+                        name=t.get("text", "")[:50],
+                        cron_expression=t.get("when"),
+                        description=t.get("text"),
+                        enabled=t.get("enabled", True),
+                        payload=t,
+                    )
+        except Exception:
+            pass
+        return None
+
+    async def update_cron_job(self, job_id: str, **kwargs):
+        return None
+
+    async def delete_cron_job(self, job_id: str) -> None:
+        if self._cron is not None:
+            try:
+                self._cron.delete_task(None, job_id)
+            except Exception:
+                pass
+
+
 class CronManagerCompat:
     def __init__(self, project_cron) -> None:
         self._cron = project_cron
-        self.db = None
+        self.db = _CronDb(project_cron)
 
     def _to_job(self, task: dict) -> CompatCronJob:
         return CompatCronJob(
@@ -202,6 +237,27 @@ class CronManagerCompat:
             payload=task,
         )
 
+    @staticmethod
+    def _cron_to_when(cron_expression: str | None) -> str:
+        """标准 cron 表达式 → 本项目自然语言格式。"""
+        if not cron_expression:
+            return "每天 08:00"
+        parts = str(cron_expression).split()
+        if len(parts) >= 5:
+            if parts[0].startswith("*/"):
+                n = parts[0][2:]
+                try:
+                    return f"每{int(n)}分钟"
+                except ValueError:
+                    pass
+            if parts[1].startswith("*/"):
+                n = parts[1][2:]
+                try:
+                    return f"每{int(n)}小时"
+                except ValueError:
+                    pass
+        return "每天 08:00"
+
     async def list_jobs(self, job_type: str | None = None) -> list[CompatCronJob]:
         if self._cron is None:
             return []
@@ -211,8 +267,34 @@ class CronManagerCompat:
         except Exception:
             return []
 
-    async def add_active_job(self, *args, **kwargs):
-        return None
+    async def add_active_job(
+        self,
+        *,
+        name=None,
+        cron_expression=None,
+        payload=None,
+        description=None,
+        timezone=None,
+        enabled=True,
+        run_once=False,
+        run_at=None,
+        **kwargs,
+    ):
+        """真实创建定时任务(映射本项目 CronManager.add_task)。"""
+        if self._cron is None:
+            raise RuntimeError("定时任务管理器未配置")
+        text = str((payload or {}).get("text") or description or name or "定时任务")
+        when = self._cron_to_when(cron_expression)
+        result = await self._cron.add_task(session_id=None, when=when, text=text)
+        job_id = str(result.get("id", "")) if isinstance(result, dict) else str(kwargs.get("job_id", ""))
+        return CompatCronJob(
+            job_id=job_id,
+            name=str(name or text)[:50],
+            cron_expression=cron_expression,
+            description=description,
+            enabled=enabled,
+            payload=payload or {},
+        )
 
     async def update_job(self, *args, **kwargs):
         return None

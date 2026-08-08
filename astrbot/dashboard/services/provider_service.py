@@ -102,7 +102,7 @@ class ProviderConfigService:
             return None
         return self._to_source(source_id)
 
-    def upsert_provider_source(self, source_id: str, config: dict) -> dict:
+    async def upsert_provider_source(self, source_id: str, config: dict) -> dict:
         meta = PROVIDER_SECTIONS.get(source_id)
         if meta is None:
             raise ValueError(f"未知 provider source: {source_id}")
@@ -115,7 +115,7 @@ class ProviderConfigService:
         self._set_cfg(meta["config_key"], merged)
         return self._to_source(source_id)
 
-    def delete_provider_source(self, source_id: str) -> None:
+    async def delete_provider_source(self, source_id: str) -> None:
         meta = PROVIDER_SECTIONS.get(source_id)
         if meta is not None:
             self._set_cfg(meta["config_key"], {})
@@ -145,8 +145,8 @@ class ProviderConfigService:
     def get_provider(self, provider_id: str, merged: bool = True) -> dict | None:
         return self._to_provider(provider_id)
 
-    def create_provider(self, config: dict) -> dict:
-        pid = str(config.get("provider_id") or config.get("id") or "")
+    async def create_provider(self, config: dict) -> dict:
+        pid = str(config.get("provider_id") or config.get("id") or config.get("provider_source_id") or config.get("source_id") or "")
         meta = PROVIDER_SECTIONS.get(pid)
         if meta is None:
             raise ValueError(f"未知 provider: {pid}")
@@ -161,7 +161,7 @@ class ProviderConfigService:
         self._set_cfg(meta["config_key"], merged)
         return self._to_provider(pid) or {}
 
-    def update_provider(self, provider_id: str, config: dict) -> dict:
+    async def update_provider(self, provider_id: str, config: dict) -> dict:
         meta = PROVIDER_SECTIONS.get(provider_id)
         if meta is None:
             raise ValueError(f"未知 provider: {provider_id}")
@@ -174,12 +174,12 @@ class ProviderConfigService:
         self._set_cfg(meta["config_key"], merged)
         return self._to_provider(provider_id) or {}
 
-    def delete_provider(self, provider_id: str) -> None:
+    async def delete_provider(self, provider_id: str) -> None:
         meta = PROVIDER_SECTIONS.get(provider_id)
         if meta is not None:
             self._set_cfg(meta["config_key"], {})
 
-    def set_provider_enabled(self, provider_id: str, enabled: bool) -> dict:
+    async def set_provider_enabled(self, provider_id: str, enabled: bool) -> dict:
         meta = PROVIDER_SECTIONS.get(provider_id)
         if meta is None:
             raise ValueError(f"未知 provider: {provider_id}")

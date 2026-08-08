@@ -91,7 +91,7 @@ class BotConfigService:
 
     # ---------------- 类型 ----------------
 
-    def list_bot_types(self) -> dict:
+    async def list_bot_types(self) -> dict:
         bot_types = []
         for key, meta in BOT_TYPES.items():
             bot_types.append({
@@ -124,7 +124,7 @@ class BotConfigService:
             })
         return bots
 
-    def list_bots(self, *, enabled: bool | None = None, type_: str | None = None) -> dict:
+    async def list_bots(self, *, enabled: bool | None = None, type_: str | None = None) -> dict:
         bots = self._all_bots()
         if enabled is not None:
             bots = [b for b in bots if b["enable"] == enabled]
@@ -132,13 +132,13 @@ class BotConfigService:
             bots = [b for b in bots if b["type"] == type_]
         return {"bots": bots}
 
-    def get_bot(self, bot_id: str) -> dict | None:
+    async def get_bot(self, bot_id: str) -> dict | None:
         for b in self._all_bots():
             if b["id"] == bot_id:
                 return b
         return None
 
-    def get_bot_stats(self) -> dict:
+    async def get_bot_stats(self) -> dict:
         """平台运行统计。"""
         platforms = []
         for key, meta in BOT_TYPES.items():
@@ -155,7 +155,7 @@ class BotConfigService:
 
     # ---------------- 增删改 ----------------
 
-    def create_bot(self, data: dict) -> dict:
+    async def create_bot(self, data: dict) -> dict:
         bot_type = str(data.get("type") or data.get("id") or "").strip()
         if bot_type not in BOT_TYPES:
             raise BotConfigServiceError(f"不支持的平台类型: {bot_type}")
@@ -173,7 +173,7 @@ class BotConfigService:
             logger.error("保存平台配置失败: %s", exc)
         return self.get_bot(bot_type) or {}
 
-    def update_bot(self, bot_id: str, data: dict) -> dict:
+    async def update_bot(self, bot_id: str, data: dict) -> dict:
         if bot_id not in BOT_TYPES:
             raise BotConfigServiceError(f"不支持的平台类型: {bot_id}")
         config = data.get("config") if isinstance(data, dict) else None
@@ -194,7 +194,7 @@ class BotConfigService:
             logger.error("保存平台配置失败: %s", exc)
         return self.get_bot(bot_id) or {}
 
-    def set_bot_enabled(self, bot_id: str, enabled: bool) -> dict:
+    async def set_bot_enabled(self, bot_id: str, enabled: bool) -> dict:
         if bot_id not in BOT_TYPES:
             raise BotConfigServiceError(f"不支持的平台类型: {bot_id}")
         current = self.config.get(bot_id, {})
@@ -208,7 +208,7 @@ class BotConfigService:
             logger.error("保存平台配置失败: %s", exc)
         return self.get_bot(bot_id) or {}
 
-    def delete_bot(self, bot_id: str) -> None:
+    async def delete_bot(self, bot_id: str) -> None:
         if bot_id not in BOT_TYPES:
             raise BotConfigServiceError(f"不支持的平台类型: {bot_id}")
         current = self.config.get(bot_id, {})
