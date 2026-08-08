@@ -451,6 +451,18 @@ export function useProviderSources(options: UseProviderSourcesOptions) {
       return
     }
 
+    // 本项目每类能力只有一个 provider source,已存在则直接选中现有配置
+    const existing = providerSources.value.find(
+      (s) =>
+        !s.isPlaceholder &&
+        (s.provider_type === template.provider_type || s.type === template.type)
+    )
+    if (existing) {
+      showMessage('该类型已配置,请直接编辑现有配置', 'info')
+      selectProviderSource(existing)
+      return
+    }
+
     const newId = generateUniqueSourceId(template.id)
     const newSource = ensureProviderSourceDefaults({
       ...extractSourceFieldsFromTemplate(template),
