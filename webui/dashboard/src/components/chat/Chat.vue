@@ -24,7 +24,7 @@
           <div v-if="!isSidebarCollapsed" class="chat-sidebar-brand-title Outfit">
             <ChatUILogo class="chat-sidebar-brand-logo" />
             <span class="chat-sidebar-brand-copy">
-              <span class="chat-sidebar-brand-name">AstrBot</span>
+              <span class="chat-sidebar-brand-name">QQ AI Agent</span>
               <span class="chat-sidebar-brand-mode">ChatUI</span>
             </span>
           </div>

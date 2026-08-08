@@ -39,6 +39,18 @@ class T2iService:
             pass
         return None
 
+    async def list_templates(self) -> dict:
+        """列出全部模板。"""
+        os.makedirs(T2I_DIR, exist_ok=True)
+        active = self._read_active()
+        templates = []
+        for f in sorted(os.listdir(T2I_DIR)):
+            if not f.endswith(".html"):
+                continue
+            name = f[:-5]
+            templates.append({"name": name, "is_active": name == active})
+        return {"templates": templates, "total": len(templates)}
+
     async def create_template(self, name: str, content: str) -> dict:
         if not name or not name.strip():
             raise T2iServiceError("缺少模板名称")

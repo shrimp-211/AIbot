@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 
-def list_commands(*args, **kwargs):
+async def list_commands(*args, **kwargs):
     return []
 
 
-def list_command_conflicts(*args, **kwargs):
+async def list_command_conflicts(*args, **kwargs):
     return []
 
 
-def rename_command(*args, **kwargs):
+async def rename_command(*args, **kwargs):
     return None
 
 
-def toggle_command(*args, **kwargs):
+async def toggle_command(*args, **kwargs):
     return None
 
 
-def update_command_permission(*args, **kwargs):
+async def update_command_permission(*args, **kwargs):
     return None

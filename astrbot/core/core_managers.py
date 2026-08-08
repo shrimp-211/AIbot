@@ -253,6 +253,95 @@ class PlatformManagerCompat:
 
 # ---------------- Provider ----------------
 
+class _ToolItem:
+    """工具项(兼容 AstrBot func_list 元素,含 .name/.description 等属性)。"""
+
+    def __init__(self, name: str, description: str = "") -> None:
+        self.name = name
+        self.description = description
+        self.enabled = True
+        self.handler_full_name = f"builtin::{name}"
+        self.attributes: list = []
+
+
+class CompatTools:
+    """包装本项目 ToolRegistry + MCP 配置,提供 AstrBot 工具管理器接口。"""
+
+    def __init__(self, tools=None, config=None) -> None:
+        self._tools = tools
+        self._config = config
+
+    def names(self) -> list[str]:
+        if self._tools is not None and hasattr(self._tools, "names"):
+            try:
+                return list(self._tools.names())
+            except Exception:
+                pass
+        return []
+
+    def schemas(self) -> list[dict]:
+        if self._tools is not None and hasattr(self._tools, "schemas"):
+            try:
+                return list(self._tools.schemas())
+            except Exception:
+                pass
+        return []
+
+    @property
+    def func_list(self) -> list:
+        """AstrBot 风格工具列表(属性,元素带 .name,供 WebUI 工具页渲染)。"""
+        items = []
+        seen: set[str] = set()
+        try:
+            for schema in self.schemas():
+                if isinstance(schema, dict) and schema.get("function", {}).get("name"):
+                    fn = schema["function"]
+                    n = fn.get("name")
+                    if n and n not in seen:
+                        seen.add(n)
+                        items.append(_ToolItem(n, fn.get("description", "")))
+        except Exception:
+            pass
+        for name in self.names():
+            if name not in seen:
+                items.append(_ToolItem(name))
+        return items
+
+    def iter_builtin_tools(self):
+        return iter([])
+
+    def is_builtin_tool(self, name: str) -> bool:
+        return False
+
+    def load_mcp_config(self) -> dict:
+        """读取 MCP 服务器配置。"""
+        try:
+            servers = self._config.get("mcp.servers", []) if self._config else []
+            if isinstance(servers, dict):
+                return {"mcpServers": servers}
+            if isinstance(servers, list):
+                return {
+                    "mcpServers": {
+                        str(s.get("name", f"server_{i}")): s
+                        for i, s in enumerate(servers)
+                        if isinstance(s, dict)
+                    }
+                }
+        except Exception:
+            pass
+        return {"mcpServers": {}}
+
+    def save_mcp_config(self, config: dict) -> bool:
+        try:
+            servers = list((config or {}).get("mcpServers", {}).values())
+            if self._config is not None:
+                self._config["mcp"] = {"servers": servers}
+                self._config.save_config()
+            return True
+        except Exception:
+            return False
+
+
 class ProviderManagerCompat:
     """Provider 管理器(映射本项目 providers 配置与实例)。"""
 
@@ -265,7 +354,7 @@ class ProviderManagerCompat:
     ) -> None:
         self.config = config
         self.provider = project_provider  # 本项目 LLM Provider
-        self.llm_tools = tools  # 本项目 ToolRegistry
+        self.llm_tools = CompatTools(tools, config)  # 本项目 ToolRegistry 包装
         self.provider_sources = provider_sources or {}
         self.providers_config: dict = {}
         self.provider_sources_config: dict = {}
