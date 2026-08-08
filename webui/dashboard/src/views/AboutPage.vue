@@ -9,7 +9,7 @@
                         prepend-icon="mdi-star">
                         {{ tm('hero.starButton') }}
                     </v-btn>
-                    <v-btn class="ml-4" @click="open('https://github.com/AstrBotDevs/AstrBot/issues')" color="secondary" size="small"
+                    <v-btn class="ml-4" @click="open('https://github.com/shrimp-211/AIbot/issues')" color="secondary" size="small"
                         variant="tonal" prepend-icon="mdi-comment-question">
                         {{ tm('hero.issueButton') }}
                     </v-btn>

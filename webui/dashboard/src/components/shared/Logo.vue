@@ -2,7 +2,7 @@
   <div class="logo-container">
     <div class="logo-content">
       <div class="logo-image">
-        <img width="80" src="@/assets/images/plugin_icon.png" alt="AstrBot Logo">
+        <img width="80" src="@/assets/images/plugin_icon.png" alt="QQ AI Agent Logo">
       </div>
       <div class="logo-text">
         <h2 
@@ -29,10 +29,10 @@ const props = withDefaults(defineProps<{
 
 // 智能格式化标题，在小屏幕上允许在合适位置换行
 const formatTitle = (title: string) => {
-  // 如果标题包含 "AstrBot" 和其他文字，在它们之间添加换行机会
-  if (title.includes('AstrBot ') || title.includes('AstrBot')) {
-    // 处理 "AstrBot 仪表盘" 或 "AstrBot Dashboard" 等格式
-    return title.replace(/(AstrBot)\s+(.+)/, '$1<wbr> $2');
+  // 如果标题包含 "QQ AI Agent" 和其他文字，在它们之间添加换行机会
+  if (title.includes('QQ AI Agent ') || title.includes('QQ AI Agent')) {
+    // 处理 "QQ AI Agent 仪表盘" 或 "QQ AI Agent Dashboard" 等格式
+    return title.replace(/(QQ AI Agent)\s+(.+)/, '$1<wbr> $2');
   }
   return title;
 }

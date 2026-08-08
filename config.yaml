@@ -1,234 +1,148 @@
-# ==================== QQ AI Agent 全局配置 ====================
-# 支持 ${ENV_VAR} 与 ${ENV_VAR:-default} 环境变量注入
-# 复制为 config.local.yaml 可本地覆盖(该文件已被 gitignore)
-
-# ---------- 反向驱动(共享 HTTP/WS 服务端,NoneBot Driver 风格) ----------
-# 启用后,onebot / onebot_http / qq_official 等被动接收类适配器
-# 共享同一端口的不同路径,不再各自开端口。
 driver:
-  enabled: true            # false = 每个适配器自持端口(旧行为)
+  enabled: true
   host: 127.0.0.1
   port: 6199
-
-# ---------- 适配器 ----------
-# 默认启用反向 WebSocket(服务端)模式,其余模式按需开启
 onebot:
-  host: 127.0.0.1          # 监听地址
-  port: 6199               # 监听端口(NapCat/Lagrange/go-cqhttp 在此反向连接)
-  path: /ws                # WebSocket 路径
-  token: ""                # Access Token(与 OneBot 客户端保持一致)
-  self_id: ""              # 机器人 QQ 号,用于 @ 检测
-
-# 可选:正向 WebSocket(客户端)模式 —— 机器人主动连接 OneBot 实现端
-# 适合内网/容器部署(无法被反向连入时),断线自动重连
+  host: 127.0.0.1
+  port: 6199
+  path: /ws
+  token: ''
+  self_id: ''
 onebot_forward:
   enabled: false
-  url: ws://127.0.0.1:6700 # OneBot 实现端的 WS 服务端地址
-  token: ""
-  self_id: ""
-
-# 可选:HTTP 上报模式 —— webhook 接收事件 + HTTP API 调用
+  url: ws://127.0.0.1:6700
+  token: ''
+  self_id: ''
 onebot_http:
   enabled: false
   host: 127.0.0.1
   port: 6198
-  path: /onebot            # 上报接收路径
-  http_url: http://127.0.0.1:5700  # OneBot 实现端 HTTP API 地址
-  token: ""
-  self_id: ""
-
-# 可选:QQ 官方开放平台 Webhook(需官方机器人凭据)
-# 注意:sign_secret 必须配置,否则 webhook 验签 fail-closed,所有事件上报都会被拒绝
+  path: /onebot
+  http_url: http://127.0.0.1:5700
+  token: ''
+  self_id: ''
 qq_official:
   enabled: false
   host: 127.0.0.1
   port: 6197
   path: /qq-official
-  app_id: ""
-  app_secret: ""
-  sign_secret: ""
-
-# 可选:Telegram 适配器(Bot API 长轮询,需 @BotFather 创建 Bot 获取 token)
+  app_id: ''
+  app_secret: ''
+  sign_secret: ''
 telegram:
   enabled: false
-  token: ""                # Bot Token
-  allowed_chat_ids: []     # 允许的群/用户 ID(空=全部)
-  poll_timeout: 30         # 长轮询超时秒数(最大 50)
-
-# ---------- LLM Provider ----------
+  token: ''
+  allowed_chat_ids: []
+  poll_timeout: 30
 llm:
   provider:
-    type: openai_compatible   # openai_compatible | anthropic
-    model: gpt-4o-mini        # 例如 DeepSeek: deepseek-chat
-    api_key: ${LLM_API_KEY:-}  # 建议用环境变量注入
-    base_url: ""              # OpenAI 兼容地址,如 DeepSeek: https://api.deepseek.com/v1
+    type: openai_compatible
+    model: gpt-4o-mini
+    api_key: ''
+    base_url: ''
     max_tokens: 4096
     temperature: 0.7
-    # 可选:上下文窗口(默认按模型名自动推断;显式配置时覆盖推断值)
-    # context_window: 128000
-    # 可选:指数退避重试(限流/超时/5xx 自动重试)
-    # retry:
-    #   max_attempts: 3      # 最多尝试次数
-    #   base_delay: 0.5      # 首次重试延迟(秒),之后翻倍
-    #   max_delay: 8.0       # 重试延迟封顶(秒)
-    # 可选(anthropic):extended_thinking 深度推理
-    # thinking:
-    #   enabled: false       # true 时启用(与 temperature 互斥)
-    #   budget_tokens: 2048  # 推理预算(需小于 max_tokens)
-    # 可选(OpenAI o1/o3 系):推理强度,配置后替代 temperature
-    # reasoning_effort: medium   # low | medium | high
-    # 可选:备用 provider 列表(主 provider 失败自动切换,冷却后自动重试)
-    # 每项结构同上(不含 fallback_providers 字段)
     fallback_providers: []
-
-# ---------- 联网搜索 ----------
 search:
-  tavily_key: ${TAVILY_API_KEY:-}
-  brave_key: ${BRAVE_API_KEY:-}
-
-# ---------- 多模态感知 Provider(STT/TTS/Embedding/Rerank) ----------
-# 供图片理解/语音转写/语音合成/向量检索使用;type: none 表示禁用
+  tavily_key: ''
+  brave_key: ''
 provider_stt:
-  type: whisper            # whisper(OpenAI API) | faster-whisper(本地,backend: local)
-  api_key: ${WHISPER_API_KEY:-}
-  base_url: ""             # OpenAI 兼容转写地址,默认 https://api.openai.com/v1
-  model: whisper-1         # 本地模式建议 model: small
-  # backend: api           # api(默认) | local(faster-whisper,无需 Key)
-
+  type: whisper
+  api_key: ''
+  base_url: ''
+  model: whisper-1
 provider_tts:
-  type: edge               # edge(微软免费语音,无需 Key)
-  voice: zh-CN-XiaoxiaoNeural  # 其他: zh-CN-YunxiNeural(男声) 等,见 edge-tts voices
-
+  type: edge
+  voice: zh-CN-XiaoxiaoNeural
 provider_embedding:
-  type: none               # openai | none(禁用;本地 sentence-transformers 见 Iteration 2)
-  api_key: ${LLM_API_KEY:-}
-  base_url: ""
+  type: none
+  api_key: ''
+  base_url: ''
   model: text-embedding-3-small
-
 provider_rerank:
-  type: none               # none(禁用) | cohere
-  api_key: ${COHERE_API_KEY:-}
+  type: none
+  api_key: ''
   model: rerank-multilingual-v3.0
-
-# ---------- 向量知识库(RAG) ----------
-# 文本分块 → Embedding → FAISS + BM25 混合检索;依赖缺失自动降级关键词检索
 knowledge:
   data_dir: data/knowledge
-  chunk_size: 800            # 每块目标字符数
-  chunk_strategy: semantic   # semantic | fixed | markdown
-  top_k: 5                   # 单次检索返回文档数
-
-# ---------- AIGC 生成层 ----------
+  chunk_size: 800
+  chunk_strategy: semantic
+  top_k: 5
 generation:
   output_dir: data/generated
   image:
-    backend: pollinations    # pollinations(免费,无需Key) | openai(DALL·E,需Key)
-    api_key: ${OPENAI_API_KEY:-}
+    backend: pollinations
+    api_key: ''
     model: dall-e-3
-    size: "1024x1024"
+    size: 1024x1024
   video:
-    api_key: ${RUNWAY_API_KEY:-}   # Runway Gen 系列,任务式 API
+    api_key: ''
     model: gen3a_turbo
   music:
-    enabled: false           # Suno/自建音乐服务,预留(需 api_key)
-
-# ---------- MCP(Model Context Protocol)外部工具 ----------
-# 每个服务器: name/command/args/env/permission_level
-# 示例: 接入 GitHub 官方 MCP 服务器
-# mcp:
-#   servers:
-#     - name: github
-#       command: npx
-#       args: ["-y", "@modelcontextprotocol/server-github"]
+    enabled: false
 mcp:
   servers: []
-
-# ---------- Agent ----------
 agent:
-  workdir: "."             # 文件工具的操作根目录
-  max_iterations: 8        # ReAct 循环最大迭代次数
-  max_context_tokens: 0    # 上下文压缩触发阈值;0=按 provider 模型自动推断窗口(超过 82% 自动压缩)
-  keep_recent_ratio: 0.15  # 上下文压缩时按 token 比例保留最近精确轮次(0-0.3),其余旧轮次 LLM 摘要(参照 AstrBot/Claude Code)
-  tool_call_timeout: 60    # 单工具执行超时(秒),防止工具挂起阻塞 Agent 循环(参照 AstrBot)
-  qq_repeat_threshold: 3   # QQ 群复读参与阈值(同消息连续 N 次且被@ 时跟上)
-
-# ---------- 插件生态(I4) ----------
+  workdir: .
+  max_iterations: 8
+  max_context_tokens: 0
+  keep_recent_ratio: 0.15
+  tool_call_timeout: 60
+  qq_repeat_threshold: 3
 plugins:
-  hot_reload: true         # 插件目录文件变更自动热重载(轮询)
-  market_url: ""           # 插件市场注册表 JSON(留空=内置精选列表)
-
-# ---------- 定时任务 ----------
+  hot_reload: true
+  market_url: ''
 cron:
-  agent_enabled: true        # 任务触发时经主 Agent 生成内容(需 LLM);false = 固定文本提醒
-
-# ---------- 记忆系统 ----------
-# 三层记忆默认开启,无需配置:
-# - 短期/工作记忆:data/agent.json(JsonKV)
-# - SQLite+FTS5 跨会话全文搜索:data/memory.sqlite3
-# - Markdown 文件记忆(MEMORY.md/USER.md/SOUL.md):data/memory/
-# 用户画像自动提炼:每 8 条用户消息触发一次 LLM 自我反思
-
-# ---------- 通知/请求事件 ----------
-# OneBot notice/request 事件:群成员变动、防撤回、加好友/加群请求策略
+  agent_enabled: true
 notice:
   welcome:
     enabled: true
-    text: "🎉 欢迎新成员 {name} 加入群聊!发送 /help 了解我能做什么~"
+    text: 🎉 欢迎新成员 {name} 加入群聊!发送 /help 了解我能做什么~
   farewell:
     enabled: true
-    text: "👋 {name} 离开了群聊"
+    text: 👋 {name} 离开了群聊
   anti_recall:
-    enabled: true          # 群撤回拦截:缓存最近消息,撤回时恢复原文
-    format: "🗑️ 撤回拦截 {name}: {text}"
-  friend_requests: accept   # 加好友请求: accept | reject | ignore
-  group_requests: accept    # 加群请求:    accept | reject | ignore
-
-# ---------- 消息管道 ----------
+    enabled: true
+    format: '🗑️ 撤回拦截 {name}: {text}'
+  friend_requests: accept
+  group_requests: accept
 pipeline:
-  group_whitelist: []      # 群白名单(QQ号列表),空数组=全部群
-  wake_words: ["机器人", "小助手", "AI"]
-  command_prefixes: ["!", "/"]
+  group_whitelist: []
+  wake_words:
+  - 机器人
+  - 小助手
+  - AI
+  command_prefixes:
+  - '!'
+  - /
   rate_limit:
-    max_messages: 30       # 每窗口最大消息数
+    max_messages: 30
     window_seconds: 60
   content_safety:
-    max_length: 5000       # 单条消息最大长度
-
-# ---------- 权限与安全 ----------
+    max_length: 5000
 security:
-  admin_users: []               # 管理员 QQ 号
-  super_admin_users: ["123456789"]  # 超级管理员 QQ 号(必须改为你自己的,启动时会警告)
-  trusted_folders: []           # bash/文件仅允许在这些目录(空=全部路径,风险高,见下方警告)
-  sandbox_enabled: false        # true = 命令经 Docker 沙箱执行(alpine)
-  audit_enabled: true           # 审计日志 data/audit.jsonl
-  pairing_enabled: false        # 私聊未配对用户需管理员审批(/approve)
-  # 内置规则: 禁读 .env/secrets, 禁危险命令, curl/wget/sudo 需管理员
-  # ⚠️ trusted_folders 为空且 sandbox_enabled=false 时,启动会打印安全警告:
-  #    对外部署前请把 trusted_folders 设为 agent.workdir,或启用沙箱
-
-# ---------- 沙箱系统与运行时(I3) ----------
-# 会话级沙箱资源池 + 超大工具结果落盘 + 中断/follow-up 控制
+  admin_users: []
+  super_admin_users:
+  - '123456789'
+  trusted_folders: []
+  sandbox_enabled: false
+  audit_enabled: true
+  pairing_enabled: false
 sandbox:
-  max_sessions: 16          # 会话池上限(LRU 淘汰,防资源泄漏)
-  result_limit: 4000        # 工具结果超此字符数自动落盘到 data/tool_results/
-  shell_backend: local      # local(子进程) | docker(需安装 docker,缺失自动降级 local)
-
-# ---------- 统一 Webhook(I5) ----------
-# 单端口多平台事件上报:POST /webhook/<platform>
+  max_sessions: 16
+  result_limit: 4000
+  shell_backend: local
 webhook:
   enabled: false
   host: 127.0.0.1
   port: 6196
   path: /webhook
-  token: ""              # 与上报方一致,留空不鉴权
-
-# ---------- 渐进式存储(I5) ----------
+  token: ''
 storage:
-  sqlmodel: false        # true = 启用 SQLModel(需 pip install sqlmodel),建表 + JsonKV 迁移
-
-# ---------- WebUI 控制台 ----------
+  sqlmodel: false
 webui:
   enabled: true
   host: 127.0.0.1
   port: 8080
-  password: ""              # 留空 = 首次启动随机生成(打印在日志中),或在此配置固定密码
+  password: TestPass123
+trace_enable: true

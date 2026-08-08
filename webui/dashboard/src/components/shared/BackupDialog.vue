@@ -934,7 +934,7 @@ const formatISODate = (isoString) => {
     }
 }
 
-// 重启 AstrBot
+// 重启 QQ AI Agent
 const restartAstrBot = async () => {
     try {
         await restartAstrBotRuntime(wfr.value)

@@ -123,7 +123,7 @@ export type workspace_type = 'session' | 'project' | 'custom';
 
 export type ChatRequest = {
     /**
-     * Caller-declared WebChat sender/session owner. Configured AstrBot administrator IDs require the chat:admin API key sub-scope.
+     * Caller-declared WebChat sender/session owner. Configured QQ AI Agent administrator IDs require the chat:admin API key sub-scope.
      */
     username?: string;
     session_id?: string;

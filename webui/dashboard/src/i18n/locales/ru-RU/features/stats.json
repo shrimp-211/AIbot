@@ -30,7 +30,7 @@
     },
     "cpu": {
       "label": "CPU",
-      "note": "Использование CPU AstrBot"
+      "note": "Использование CPU QQ AI Agent"
     },
     "memory": {
       "label": "Память процесса",

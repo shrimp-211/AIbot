@@ -354,7 +354,7 @@ const openWebui = () => {
               label
               size="small"
             >
-              AstrBot: {{ astrbotVersionRequirement }}
+              QQ AI Agent: {{ astrbotVersionRequirement }}
             </v-chip>
           </div>
 

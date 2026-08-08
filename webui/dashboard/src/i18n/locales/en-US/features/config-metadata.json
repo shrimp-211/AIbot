@@ -3,7 +3,7 @@
     "name": "AI",
     "agent_runner": {
       "description": "Agent Runner",
-      "hint": "Select the runner for AI conversations. Defaults to AstrBot's built-in Agent runner, which supports knowledge base, persona, and tool calling features. You don't need to modify this section unless you plan to integrate third-party Agent runners like Dify, Coze, or DeerFlow.",
+      "hint": "Select the runner for AI conversations. Defaults to QQ AI Agent's built-in Agent runner, which supports knowledge base, persona, and tool calling features. You don't need to modify this section unless you plan to integrate third-party Agent runners like Dify, Coze, or DeerFlow.",
       "provider_settings": {
         "enable": {
           "description": "Enable",
@@ -164,15 +164,15 @@
     },
     "agent_computer_use": {
       "description": "Agent Computer Use",
-      "hint": "Allows the AstrBot to access and use your computer or an sandbox environment to perform more complex tasks. See: [Computer Use](https://docs.astrbot.app/use/computer.html).",
+      "hint": "Allows the QQ AI Agent to access and use your computer or an sandbox environment to perform more complex tasks. See: [Computer Use](https://docs.astrbot.app/use/computer.html).",
       "provider_settings": {
         "computer_use_runtime": {
           "description": "Computer Use Runtime",
           "hint": "Environment allowed for Agent usage. `local` means the local machine environment, `sandbox` means the sandbox environment, and `none` means no environment is allowed."
         },
         "computer_use_require_admin": {
-          "description": "Require AstrBot Admin Permission",
-          "hint": "When enabled, AstrBot admin permission is required to use computer capabilities. Admins can be added in Platform Config. Use the /sid command to view admin IDs."
+          "description": "Require QQ AI Agent Admin Permission",
+          "hint": "When enabled, QQ AI Agent admin permission is required to use computer capabilities. Admins can be added in Platform Config. Use the /sid command to view admin IDs."
         },
         "sandbox": {
           "booter": {
@@ -204,7 +204,7 @@
           },
           "cua_idle_timeout": {
             "description": "CUA Idle Timeout",
-            "hint": "Idle timeout for CUA sandbox sessions in seconds. When greater than 0, AstrBot proactively shuts down an idle CUA sandbox after that amount of inactivity; 0 disables it."
+            "hint": "Idle timeout for CUA sandbox sessions in seconds. When greater than 0, QQ AI Agent proactively shuts down an idle CUA sandbox after that amount of inactivity; 0 disables it."
           },
           "cua_telemetry_enabled": {
             "description": "CUA Telemetry",
@@ -239,12 +239,12 @@
     },
     "proactive_capability": {
       "description": "Proactive Agent",
-      "hint": "AstrBot will wake up, run your tasks, and deliver the results to you. See [Proactive Agent](https://docs.astrbot.app/en/use/proactive-agent.html)",
+      "hint": "QQ AI Agent will wake up, run your tasks, and deliver the results to you. See [Proactive Agent](https://docs.astrbot.app/en/use/proactive-agent.html)",
       "provider_settings": {
         "proactive_capability": {
           "add_cron_tools": {
             "description": "Enable",
-            "hint": "When enabled, related tools will be passed to the Agent to implement proactive Agent capabilities. You can tell AstrBot what to do at a future time, and it will be triggered on schedule to execute the task, and report the result back to you."
+            "hint": "When enabled, related tools will be passed to the Agent to implement proactive Agent capabilities. You can tell QQ AI Agent what to do at a future time, and it will be triggered on schedule to execute the task, and report the result back to you."
           }
         }
       }
@@ -279,7 +279,7 @@
         },
         "llm_compress_provider_id": {
           "description": "Model Provider ID for Context Compression",
-          "hint": "When left empty, the current chat model will be used for compression. If the model is unavailable or compression fails, AstrBot falls back to the 'Truncate by Turns' strategy."
+          "hint": "When left empty, the current chat model will be used for compression. If the model is unavailable or compression fails, QQ AI Agent falls back to the 'Truncate by Turns' strategy."
         },
         "fallback_max_context_tokens": {
           "description": "Fallback context window size",
@@ -436,11 +436,11 @@
       },
       "discord_allow_bot_messages": {
         "description": "Allow Bot Messages",
-        "hint": "When enabled, AstrBot will receive messages from other Discord bots. Useful for bot-to-bot communication scenarios (e.g., message forwarding). Disabled by default."
+        "hint": "When enabled, QQ AI Agent will receive messages from other Discord bots. Useful for bot-to-bot communication scenarios (e.g., message forwarding). Disabled by default."
       },
       "discord_command_register": {
         "description": "Register Discord slash commands",
-        "hint": "When enabled, AstrBot will automatically register plugin commands as Discord slash commands"
+        "hint": "When enabled, QQ AI Agent will automatically register plugin commands as Discord slash commands"
       },
       "discord_proxy": {
         "description": "Discord Proxy URL",
@@ -586,11 +586,11 @@
       },
       "telegram_command_auto_refresh": {
         "description": "Telegram Command Auto Refresh",
-        "hint": "When enabled, AstrBot automatically refreshes Telegram commands at runtime. (Setting this alone has no effect)"
+        "hint": "When enabled, QQ AI Agent automatically refreshes Telegram commands at runtime. (Setting this alone has no effect)"
       },
       "telegram_command_register": {
         "description": "Telegram Command Registration",
-        "hint": "When enabled, AstrBot automatically registers Telegram commands."
+        "hint": "When enabled, QQ AI Agent automatically registers Telegram commands."
       },
       "telegram_command_register_interval": {
         "description": "Telegram Command Auto Refresh Interval",
@@ -621,7 +621,7 @@
       },
       "unified_webhook_mode": {
         "description": "Unified Webhook Mode",
-        "hint": "When enabled, use AstrBot unified webhook entry without opening a separate port. Callback URL is /api/v1/webhooks/platforms/{webhook_uuid}."
+        "hint": "When enabled, use QQ AI Agent unified webhook entry without opening a separate port. Callback URL is /api/v1/webhooks/platforms/{webhook_uuid}."
       },
       "webhook_uuid": {
         "description": "Webhook UUID",
@@ -669,7 +669,7 @@
       },
       "wpp_active_message_poll": {
         "description": "Enable Proactive Message Polling",
-        "hint": "Only enable if WeChat messages are not syncing to AstrBot on time. Disabled by default."
+        "hint": "Only enable if WeChat messages are not syncing to QQ AI Agent on time. Disabled by default."
       },
       "wpp_active_message_poll_interval": {
         "description": "Proactive Message Poll Interval",
@@ -677,7 +677,7 @@
       },
       "ws_reverse_host": {
         "description": "Reverse WebSocket Host",
-        "hint": "AstrBot acts as the server."
+        "hint": "QQ AI Agent acts as the server."
       },
       "ws_reverse_port": {
         "description": "Reverse WebSocket Port"
@@ -793,7 +793,7 @@
       },
       "disable_builtin_commands": {
         "description": "Disable Built-in Commands",
-        "hint": "Disable all built-in AstrBot commands such as help, sid, new, etc."
+        "hint": "Disable all built-in QQ AI Agent commands such as help, sid, new, etc."
       }
     },
     "whitelist": {
@@ -1040,7 +1040,7 @@
       },
       "t2i_endpoint": {
         "description": "Text-to-Image Service API Endpoint",
-        "hint": "Uses AstrBot API service when empty"
+        "hint": "Uses QQ AI Agent API service when empty"
       },
       "t2i_template": {
         "description": "Text-to-Image Custom Template",
@@ -1092,11 +1092,11 @@
       },
       "callback_api_base": {
         "description": "Externally Accessible Callback API Address",
-        "hint": "External services may access AstrBot's backend through callback links generated by AstrBot (such as file download links). Since AstrBot cannot automatically determine the externally accessible host address in the deployment environment, this configuration item is needed to explicitly specify how external services should access AstrBot's address. Examples: [http://localhost:6185](http://localhost:6185), [https://example.com](https://example.com), etc."
+        "hint": "External services may access QQ AI Agent's backend through callback links generated by QQ AI Agent (such as file download links). Since QQ AI Agent cannot automatically determine the externally accessible host address in the deployment environment, this configuration item is needed to explicitly specify how external services should access QQ AI Agent's address. Examples: [http://localhost:6185](http://localhost:6185), [https://example.com](https://example.com), etc."
       },
       "disable_metrics": {
         "description": "Disable Anonymous Usage Statistics",
-        "hint": "When disabled, AstrBot will not upload anonymous usage statistics."
+        "hint": "When disabled, QQ AI Agent will not upload anonymous usage statistics."
       },
       "dashboard": {
         "trust_proxy_headers": {
@@ -1678,7 +1678,7 @@
       },
       "whisper_device": {
         "description": "Inference device",
-        "hint": "Whisper inference device. Apple Silicon can use mps; other environments should use cpu. If mps is selected but unavailable, AstrBot will fall back to cpu."
+        "hint": "Whisper inference device. Apple Silicon can use mps; other environments should use cpu. If mps is selected but unavailable, QQ AI Agent will fall back to cpu."
       },
       "id": {
         "description": "ID"
@@ -1783,7 +1783,7 @@
       },
       "auto_save_history": {
         "description": "Conversation history managed by Coze",
-        "hint": "When enabled, Coze manages conversation history. AstrBot's locally saved context will not take effect (read-only), and operations on AstrBot context will not apply. If disabled, AstrBot manages the context."
+        "hint": "When enabled, Coze manages conversation history. QQ AI Agent's locally saved context will not take effect (read-only), and operations on QQ AI Agent context will not apply. If disabled, QQ AI Agent manages the context."
       }
     }
   },

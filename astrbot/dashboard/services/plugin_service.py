@@ -991,6 +991,7 @@ class PluginService:
                     aiohttp.ClientSession(
                         trust_env=True,
                         connector=connector,
+                        timeout=aiohttp.ClientTimeout(total=10),
                     ) as session,
                     session.get(url) as response,
                 ):
@@ -1095,6 +1096,7 @@ class PluginService:
                 aiohttp.ClientSession(
                     trust_env=True,
                     connector=connector,
+                    timeout=aiohttp.ClientTimeout(total=10),
                 ) as session,
                 session.get(md5_url) as response,
             ):

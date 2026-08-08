@@ -164,7 +164,7 @@ export const useExtensionPage = (initialTab = "installed") => {
     metadata: null,
   });
 
-  // AstrBot 版本范围不兼容警告对话框
+  // QQ AI Agent 版本范围不兼容警告对话框
   const versionSupportDialog = reactive({
     show: false,
     message: "",
@@ -2024,7 +2024,7 @@ export const useExtensionPage = (initialTab = "installed") => {
         return {
           checked: true,
           supported: false,
-          message: `AstrBot ${currentVersion} does not satisfy plugin astrbot_version: ${normalizedSpec}`,
+          message: `QQ AI Agent ${currentVersion} does not satisfy plugin astrbot_version: ${normalizedSpec}`,
         };
       }
     }

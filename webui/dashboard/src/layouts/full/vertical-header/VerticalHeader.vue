@@ -1596,7 +1596,7 @@ onMounted(async () => {
                     t("core.header.updateDialog.preReleaseWarning.description")
                   }}
                   <a
-                    href="https://github.com/AstrBotDevs/AstrBot/issues"
+                    href="https://github.com/shrimp-211/AIbot/issues"
                     target="_blank"
                     class="text-decoration-none"
                   >

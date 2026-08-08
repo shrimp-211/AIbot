@@ -2,14 +2,14 @@
     "title": "Плагины",
     "subtitle": "Управление и настройка расширений системы",
     "tabs": {
-        "installedPlugins": "Плагины AstrBot",
+        "installedPlugins": "Плагины QQ AI Agent",
         "market": "Магазин плагинов",
         "installedMcpServers": "MCP",
         "skills": "Навыки",
         "handlersOperation": "Управление поведением"
     },
     "titles": {
-        "installedAstrBotPlugins": "Установленные"
+        "installedQQ AI AgentPlugins": "Установленные"
     },
     "failedPlugins": {
         "title": "Ошибка загрузки ({count})",
@@ -133,7 +133,7 @@
             "category": "Категория",
             "stars": "Звезды",
             "tags": "Теги",
-            "astrbotVersion": "Требуемая версия AstrBot",
+            "astrbotVersion": "Требуемая версия QQ AI Agent",
             "supportPlatforms": "Поддерживаемые платформы",
             "authorWebsite": "Сайт автора",
             "repository": "Репозиторий"
@@ -226,7 +226,7 @@
             "supportPlatformsCount": "Поддерживает платформ: {count}",
             "sectionTitle": "Установка",
             "downloadSource": "Пакет плагина будет установлен из:",
-            "repositorySecurityWarning": "AstrBot не может гарантировать безопасность плагинов, загруженных из репозитория кода. Устанавливайте только если доверяете источнику плагина."
+            "repositorySecurityWarning": "QQ AI Agent не может гарантировать безопасность плагинов, загруженных из репозитория кода. Устанавливайте только если доверяете источнику плагина."
         },
         "update": {
             "title": "Обновление плагина",
@@ -242,7 +242,7 @@
         },
         "versionSupport": {
             "title": "Предупреждение о версии",
-            "message": "Требуемая плагином версия AstrBot не совпадает с вашей текущей версией. Вы можете продолжить установку на свой страх и риск.",
+            "message": "Требуемая плагином версия QQ AI Agent не совпадает с вашей текущей версией. Вы можете продолжить установку на свой страх и риск.",
             "confirm": "Игнорировать и установить",
             "cancel": "Отмена"
         },
@@ -441,7 +441,7 @@
             "handlersCount": "действий",
             "supportPlatform": "Платформы",
             "supportPlatformsCount": "Платформ: {count}",
-            "astrbotVersion": "Требуемая версия AstrBot"
+            "astrbotVersion": "Требуемая версия QQ AI Agent"
         },
         "alt": {
             "logo": "логотип",
